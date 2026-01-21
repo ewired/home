@@ -1,0 +1,5 @@
+**/node_modules
+**/.git
+**/.jj
+.config/opencode/.gitignore
+.config/opencode/bun.lock
