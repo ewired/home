@@ -1,0 +1,65 @@
+theme = "base16_terminal"
+
+[editor]
+rulers = [80]
+# rainbow-brackets = true
+end-of-line-diagnostics = "hint"
+
+[editor.inline-diagnostics]
+cursor-line = "hint"
+
+[editor.smart-tab]
+enable = true
+
+[editor.soft-wrap]
+wrap-at-text-width = true
+
+[keys.normal]
+tab = "move_parent_node_end"
+S-tab = "move_parent_node_start"
+g = {"E" = "goto_file_end"}
+"C-y" = [
+  ":sh printf '%%s:%%s-%%s' '%{buffer_name}' '%{selection_line_start}' '%{selection_line_end}' | wl-copy"
+]
+
+[keys.insert]
+S-tab = "move_parent_node_start"
+
+[keys.select]
+tab = "extend_parent_node_end"
+S-tab = "extend_parent_node_start"
+g = {"E" = "extend_to_file_end"}
+"C-y" = [
+  ":sh printf '%%s:%%s-%%s' '%{buffer_name}' '%{selection_line_start}' '%{selection_line_end}' | wl-copy"
+]
+
+[editor.statusline]
+left = [
+  "mode",
+  "spinner",
+  "version-control",
+  "spacer",
+  "separator",
+  "file-name",
+  "read-only-indicator",
+  "file-modification-indicator",
+
+]
+center = []
+right = [
+  "diagnostics",
+  "workspace-diagnostics",
+  "position",
+  "total-line-numbers",
+  "position-percentage",
+  "file-encoding",
+  "file-line-ending",
+  "file-type",
+  "register",
+  "selections",
+]
+separator = "│"
+mode.normal = "NOR"
+mode.insert = "INS"
+mode.select = "SEL"
+

@@ -1,0 +1,52 @@
+[[language]]
+name = "markdown"
+soft-wrap.enable = true
+roots = [".zk"]
+language-servers = [ "rumdl", "zk", "markdown-oxide" ]
+
+[[language]]
+name = "jjdescription"
+soft-wrap.enable = true
+
+[[language]]
+name = "typescript"
+roots = ["deno.json", "deno.jsonc", "package.json", "isograph.config.json"]
+language-servers = ["typescript-language-server", "deno-lsp", "isograph"]
+
+[language.debugger]
+command = "js-debug-dap"
+name = "js-debug-dap"
+transport = "tcp"
+port-arg = "{} 127.0.0.1"
+quirks = { absolute-paths = true }
+
+[[language.debugger.templates]]
+name = "Deno Attach"
+request = "attach"
+args = { type = "pwa-node", attachSimplePort = "9229" }
+
+[[language]]
+name = "tsx"
+roots = ["deno.json", "deno.jsonc", "package.json", "isograph.config.json"]
+language-servers = ["typescript-language-server", "deno-lsp", "isograph"]
+
+[language-server.typescript-language-server]
+required-root-patterns = ["package.json"]
+
+[language-server.deno-lsp]
+command = "deno"
+args = ["lsp"]
+config = { deno = { enable = true } }
+required-root-patterns = ["deno.*"]
+
+[language-server.isograph]
+command = "deno"
+args = ["run", "-A", "npm:@isograph/compiler@main", "lsp"]
+required-root-patterns = ["isograph.config.json"]
+
+[language-server.zk]
+command = "zk"
+args = ["lsp"]
+required-root-patterns = [".zk"]
+except-features = ["goto-definition"]
+
