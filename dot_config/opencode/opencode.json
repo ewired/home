@@ -1,0 +1,53 @@
+{
+  "username": "user",
+  "permission": {
+    "bash": {
+      "git *": "deny"
+    }
+  },
+  "formatter": {
+    "prettier": {
+      "disabled": true
+    }
+  },
+  "agent": {
+    "githubsearch": {
+      "description": "An agent that can only search and summarize results from public GitHub repositories. Provide specific symbols to search for existing solutions. Optionally, suggest repositories to search.",
+      "prompt": "Use the GitHub code search tools to find and summarize idiomatic usage of the given symbols. When applicable, first search for repositories that may be relevant and use GitHub's search syntax to limit the code search to them. ALWAYS set a low limitation on the amount of GitHub results to prevent confusion.",
+      "temperature": 0.1,
+      "tools": {
+        "*": false,
+        "github_search_code": true,
+        "github_search_repositories": true,
+        "github_get_file_contents": true
+      }
+    }
+  },
+  "mcp": {
+    "context7": {
+      "type": "remote",
+      "url": "https://mcp.context7.com/mcp",
+      "headers": {
+        "CONTEXT7_API_KEY": "{env:CONTEXT7_API_KEY}"
+      }
+    },
+    "github": {
+      "type": "remote",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "headers": {
+        "Authorization": "Bearer {env:GITHUB_PAT}"
+      }
+    },
+    "ck": {
+      "type": "local",
+      "command": [
+        "ck",
+        "--serve"
+      ]
+    }
+  },
+  "tools": {
+    "github*": false
+  },
+  "$schema": "https://opencode.ai/config.json"
+}
