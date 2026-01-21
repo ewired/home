@@ -1,0 +1,70 @@
+[custom_commands]
+"fix" = { key = ["F"], args = ["fix", "-s", "$checked_commit_ids"] }
+
+[custom_commands."resolve mergiraf"]
+key = ["!"]
+args = ["resolve", "--tool", "mergiraf", "-r", "$change_id"]
+
+[custom_commands."new note commit after"]
+key = ["N"]
+args = ["new", "--no-edit", "-A", "$change_id"]
+
+[custom_commands."opencode"]
+key = ["O"]
+args = ["opencode", "$change_id"]
+
+[custom_commands."opencode commit"]
+key = ["C"]
+args = ["occ", "$change_id"]
+
+[custom_commands."append files to desc"]
+key = ["ctrl+f"]
+args = ["append-files", "$change_id"]
+show = "interactive"
+
+[custom_commands."copy for opencode"]
+key = ["ctrl+o"]
+args = ["util", "exec", "--", "bash", "-c", """
+echo "$@" \
+  | sed 's/[[:space:]]\\+/ /g' \
+  | tr ' ' '\n' \
+  | grep -v '^[$]checked_files' \
+  | sed 's/file:"\\([^"]*\\)"/\\1/g' \
+  | sort -u \
+  | sed 's/^/@/' \
+  | tr '\n' ' ' \
+  | wl-copy
+""", "", "$checked_files", "$file"]
+
+[custom_commands."diff to working"]
+key = ["ctrl+d"]
+args = ["diff", "-r", "$change_id::@"]
+show = "diff"
+
+[custom_commands."delta"]
+key = ["#"]
+args = ["diff", "--tool", "delta", "-r", "$change_id"]
+show = "diff"
+
+[custom_commands."editor"]
+key = ["ctrl+e"]
+show = "interactive"
+args = ["util", "exec", "--", "bash", "-c", """
+jj edit-with-lines $( echo "$@" \
+  | sed 's/[[:space:]]\\+/ /g' \
+  | tr ' ' '\n' \
+  | grep -v '^[$]checked_files' \
+  | sed 's/file:"\\([^"]*\\)"/\\1/g' \
+  | sort -u | tac \
+  | tr '\n' ' ' )
+""", "", "$checked_files", "$file"]
+
+[leader.e]
+context = [ "$file", "$change_id" ]
+help = "Edit file in @"
+send = [ "$", "$EDITOR $file", "enter" ]
+
+[leader.E]
+context = [ "$file", "$change_id" ]
+help = "Edit file in change"
+send = [ "$", "jj edit \"$change_id\" && $EDITOR $file", "enter" ]
