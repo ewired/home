@@ -1,0 +1,258 @@
+"$schema" = "https://jj-vcs.github.io/jj/latest/config-schema.json"
+
+[ui]
+diff-formatter = ["difft", "--color=always", "$left", "$right"]
+# diff-formatter = "delta"
+
+[merge-tools.delta]
+diff-expected-exit-codes = [0, 1]
+
+[user]
+name = "ewired"
+email = "ewired@tuyuji.com"
+
+[templates]
+draft_commit_description = '''
+  concat(
+    coalesce(description, default_commit_description, "\n"),
+    surround(
+      "\nJJ: This commit contains the following changes:\n", "",
+      indent("JJ:     ", diff.stat(72)),
+    ),
+    "\nJJ: ignore-rest\n",
+    diff.git(),
+  )
+'''
+log_node = '''
+if(self && !current_working_copy && !immutable && !conflict && in_branch(self),
+  "◇",
+  builtin_log_node
+)
+'''
+
+
+[template-aliases]
+"in_branch(commit)" = 'commit.contained_in("immutable_heads()..bookmarks()")'
+"format_timestamp(timestamp)" = "timestamp.ago()"
+'format_short_commit_header(commit)' = '''
+separate(" ",
+  format_short_change_id_with_change_offset(commit),
+  if(commit.empty(), "",
+    label("diff added", "+" ++ commit.diff().stat().total_added())
+        ++
+        label("diff removed", "-" ++ commit.diff().stat().total_removed())),
+  if(commit.mine(), "",
+    format_short_signature(commit.author())),
+  format_timestamp(commit_timestamp(commit)),
+  commit.bookmarks(),
+  commit.tags(),
+  commit.working_copies(),
+  format_short_commit_id(commit.commit_id()),
+  format_commit_labels(commit),
+  if(config("ui.show-cryptographic-signatures").as_boolean(),
+    format_short_cryptographic_signature(commit.signature())
+  ),
+)
+'''
+
+
+[aliases]
+opencode = ["util", "exec", "--", "bash", "-c", """
+#!/usr/bin/env bash
+set -euo pipefail
+
+API=http://127.0.0.1:20202
+
+# Check if opencode is running
+if ! curl -sS "$API" > /dev/null 2>&1; then
+  echo "opencode is not running" 1>&2
+  exit 1
+fi
+
+post() {
+  curl -sS -X POST -H "Content-Type: application/json" -d @- $API/$1 > /dev/null
+}
+
+jj edit ${1:-@} > /dev/null 2>&1
+
+if [ "$(jj diff -s)" != "" ]; then 
+  echo "Current change is not clean, creating new change"
+  jj describe -m "SUBMITTED: unclean change"
+  jj new > /dev/null 2>&1
+fi
+
+echo '{"command": "session_new"}' | post tui/execute-command
+echo '{}' | post tui/clear-prompt
+
+description=$(jj log --no-graph -r @ --template 'description')
+
+
+if [ -n "$description" ]; then
+  # Strip "SUBMITTED: " prefix if present
+  clean_description=$(echo "$description" | sed 's/^SUBMITTED: //')
+  (\
+    jj newhunks 'opencode_job_trail()' | sed 's/^/@/'; \
+    jj diff --git -r 'opencode_job_trail()'; \
+    echo "\n\n# Instructions:\n"; \
+    echo "$clean_description" \
+  ) \
+    | jq -Rs '{text: .}' \
+    | post tui/append-prompt
+
+  echo '{}' | post tui/submit-prompt
+
+  echo "Parent diff and current diff's description were sent to opencode"
+
+  jj describe -m "SUBMITTED: $clean_description" > /dev/null 2>&1
+else
+  todos=$(jj find-todos 'opencode_job_trail()')
+  
+  if [ -n "$todos" ]; then
+    (\
+      jj newhunks 'opencode_job_trail()' | sed 's/^/@/'; \
+      jj diff --git -r 'opencode_job_trail()'; \
+      echo "\n\n# Instructions\n\nAddress these TODOs that were added in the changes:\n"; \
+      echo "$todos" \
+    ) \
+      | jq -Rs '{text: .}' \
+      | post tui/append-prompt
+
+    echo '{}' | post tui/submit-prompt
+
+    echo "Parent diff and extracted TODOs were sent to opencode"
+    
+    jj describe -m "SUBMITTED: Address TODOs in changes" > /dev/null 2>&1
+  else
+    echo "No instructions or TODOs to send" 1>&2
+    exit 1
+  fi
+fi
+""", ""]
+oc = ["opencode"]
+
+occ = ["util", "exec", "--", "bash", "-c", """
+#!/usr/bin/env bash
+set -euo pipefail
+
+API=http://127.0.0.1:20202
+
+# Check if opencode is running
+if ! curl -sS "$API" > /dev/null 2>&1; then
+  echo "opencode is not running" 1>&2
+  exit 1
+fi
+
+post() {
+  curl -sS -X POST -H "Content-Type: application/json" -d @- $API/$1 > /dev/null
+}
+
+jj edit ${1:-@} > /dev/null 2>&1
+
+if [ -z "$(jj diff -s)" ]; then echo "No changes to describe with opencode" 1>&2; exit 1; fi
+
+echo '{"command": "session_new"}' | post tui/execute-command
+echo '{}' | post tui/clear-prompt
+echo '{"text": "/commit"}' | post tui/append-prompt
+echo '{}' | post tui/submit-prompt
+""", ""]
+
+opencode-jobs = ["log", "--no-graph", "--reversed", "--template", 'change_id ++ "\n"', "-r", "opencode_job()"]
+
+newhunks = ["util", "exec", "--", "bash", "-c", """
+jj diff -r "${1:-@}" --git | awk '
+  /^diff --git/ {
+    current_file = $4
+    gsub(/^b\\//, "", current_file)
+  }
+  /^@@/ {
+    if (match($0, /@@ -([0-9]+)(,([0-9]+))? \\+([0-9]+)(,([0-9]+))? @@/, arr)) {
+      new_start = arr[4]
+      new_count = (arr[6] != "") ? arr[6] : 1
+      new_end = new_start + new_count - 1
+      print current_file ":" new_start "-" new_end
+    }
+  }'
+""", ""]
+
+opencode-next-job = ["util", "exec", "--", "bash", "-c", """
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Find the first descendant empty commit with a description
+target_change=$(jj opencode-jobs | head -n 1)
+
+if [ -z "$target_change" ]; then
+  echo "No opencode job found (empty mutable tip with non-empty description)" 1>&2
+  exit 1
+fi
+
+echo "Found empty commit with description: $target_change"
+jj opencode "$target_change"
+""", ""]
+
+append-files = ["util", "exec", "--", "bash", "-c", """
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Get current description for the specified revision or default to @
+current_desc=$(jj log --no-graph -r ${1:-@} --template 'description' 2>/dev/null || echo "")
+
+# Use fzf to select files directly
+selected_files=$(fzf --multi --prompt='Select files to append to the description: ')
+
+if [ -z "$selected_files" ]; then
+  echo "No files selected" 1>&2
+  exit 1
+fi
+
+# Convert selected files to a space-separated list with @ prefix
+files_list=$(echo "$selected_files" | sed 's/^/@/' | tr '\n' ' ' | sed 's/ $//')
+
+# Create new description
+if [ -n "$current_desc" ]; then
+  # Trim whitespace from current description
+  trimmed_desc=$(echo "$current_desc" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+  new_desc="$trimmed_desc $files_list"
+else
+  new_desc="$files_list"
+fi
+
+# Update the description
+jj describe -r ${1:-@} -m "$new_desc"
+echo "Appended files to description: $files_list"
+""", ""]
+
+find-todos = ["util", "exec", "--", "bash", "-c", """
+#!/usr/bin/env bash
+set -euo pipefail
+
+jj diff --git -r "${1:-@}" --context 0 | awk '/^\\+.*/ && (/TODO/ || /FIXME/) {print}'
+""", ""]
+
+edit-with-lines = ["util", "exec", "--", "bash", "-c", """
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Build editor arguments from modified files or use provided files
+editor_args=""
+for file in "$@"; do
+  line=$(jj diff -r "latest(files('$file') & ::@)" --git --context 0 "$file" | awk '
+    /^@@/ {
+      if (match($0, /@@ -([0-9]+)(,([0-9]+))? \\+([0-9]+)(,([0-9]+))? @@/, arr)) {
+        print arr[4]
+        exit
+      }
+    }')
+  if [ -n "$line" ]; then
+    editor_args="$editor_args $file:$line"
+  else
+    editor_args="$editor_args $file"
+  fi
+done
+
+${EDITOR:-vim} $editor_args
+""", ""]
+
+[revset-aliases]
+'opencode_job()' = '~@ & mutable() & (empty() ~ ::(~empty())) & ~description(exact:"") & ~description(regex:"^SUBMITTED: ")'
+'opencode_job_trail()' = 'latest(::@- & ~description(regex:"^SUBMITTED: "))::@'
