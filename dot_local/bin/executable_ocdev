@@ -1,0 +1,8 @@
+#!/bin/bash
+CURRENT_DIR="$(pwd)"
+cd ~/Documents/opencode
+if [ $# -eq 0 ]; then
+  bun dev --port 20202 "$CURRENT_DIR"
+else
+  bun dev --port 20202 "$@"
+fi
