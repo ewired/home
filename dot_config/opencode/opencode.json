@@ -37,13 +37,6 @@
       "headers": {
         "Authorization": "Bearer {env:GITHUB_PAT}"
       }
-    },
-    "ck": {
-      "type": "local",
-      "command": [
-        "ck",
-        "--serve"
-      ]
     }
   },
   "tools": {
