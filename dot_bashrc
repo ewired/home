@@ -16,6 +16,11 @@ if ! [[ "$PATH" =~ "/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sb
 fi
 export PATH
 
+if ! [[ "$PATH" =~ "$HOME/go/bin:" ]]; then
+    PATH="$HOME/go/bin:$PATH"
+fi
+export PATH
+
 # Uncomment the following line if you don't like systemctl's auto-paging feature:
 # export SYSTEMD_PAGER=
 
