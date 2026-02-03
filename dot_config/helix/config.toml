@@ -1,6 +1,8 @@
 theme = "base16_terminal"
 
 [editor]
+inline-completion-timeout = 150
+
 rulers = [80]
 # rainbow-brackets = true
 end-of-line-diagnostics = "hint"
@@ -24,6 +26,8 @@ g = {"E" = "goto_file_end"}
 
 [keys.insert]
 S-tab = "move_parent_node_start"
+tab = "inline_completion_accept"
+C-e = "inline_completion_dismiss"
 
 [keys.select]
 tab = "extend_parent_node_end"
