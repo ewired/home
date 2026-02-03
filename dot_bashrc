@@ -38,8 +38,11 @@ unset rc
 
 which mise >/dev/null 2>&1 && eval "$(mise activate bash)" && export PATH="$HOME/.cache/.bun/bin:$PATH"
 
-if command -v helix >/dev/null 2>&1; then
+if command -v hx >/dev/null 2>&1; then
+    export EDITOR=hx
+elif command -v helix >/dev/null 2>&1; then
     export EDITOR=helix
+    alias hx=helix
 else
     export EDITOR=vim
 fi
