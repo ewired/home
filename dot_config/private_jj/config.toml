@@ -73,13 +73,18 @@ post() {
   curl -sS -X POST -H "Content-Type: application/json" -d @- $API/$1 > /dev/null
 }
 
-jj edit ${1:-@} > /dev/null 2>&1
+ jj edit ${1:-@} > /dev/null 2>&1
 
-if [ "$(jj diff -s)" != "" ]; then 
-  echo "Current change is not clean, creating new change"
-  jj describe -m "SUBMITTED: unclean change"
-  jj new > /dev/null 2>&1
-fi
+ if [ "$(jj diff -s)" != "" ]; then
+   echo "Current change is not clean, creating new change"
+   # Save current description before creating new change
+   current_description=$(jj log --no-graph -r @ --template 'description' 2>/dev/null || echo "")
+   jj new > /dev/null 2>&1
+   # Restore the description on the new change if we had one
+   if [ -n "$current_description" ]; then
+     jj describe -m "$current_description" > /dev/null 2>&1
+   fi
+ fi
 
 echo '{"command": "session_new"}' | post tui/execute-command
 echo '{}' | post tui/clear-prompt
