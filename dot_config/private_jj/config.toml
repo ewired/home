@@ -258,6 +258,37 @@ done
 ${EDITOR:-vim} $editor_args
 """, ""]
 
+run-set = ["util", "exec", "--", "bash", "-c", """
+#!/usr/bin/env bash
+set -euo pipefail
+
+cleanup() {
+  echo -e "\nInterrupted, stopping..."
+  kill -- -$$ 2>/dev/null || true
+  exit 130
+}
+trap cleanup INT TERM
+
+if [ $# -lt 2 ]; then
+  echo "Usage: jj run-set <revset> <command...>" 1>&2
+  exit 1
+fi
+
+revset="$1"
+shift
+
+for change in $(jj log --no-graph --reversed -r "$revset" --template 'change_id ++ "\n"'); do
+  jj edit "$change" > /dev/null 2>&1
+  jj new > /dev/null 2>&1
+  if "$@"; then
+    jj describe -m "exit 0: $*" > /dev/null 2>&1
+  else
+    exit_code=$?
+    jj describe -m "exit $exit_code: $*" > /dev/null 2>&1
+  fi
+done
+""", ""]
+
 [revset-aliases]
 'opencode_job()' = '~@ & mutable() & (empty() ~ ::(~empty())) & ~description(exact:"") & ~description(regex:"^SUBMITTED: ")'
 'opencode_job_trail()' = 'latest(::@- & ~description(regex:"^SUBMITTED: "))::@'
