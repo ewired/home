@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+while [ "$(td list)" != "No issues found" ]; do
+  export TASK=$(td critical-path --json | jq -r '.critical_path[0]')
+
+  # Work on the same task until it's closed
+  while true; do
+    TASK_STATUS=$(td show "$TASK" --json 2>/dev/null | jq -r '.status' || echo "unknown")
+
+    if [ "$TASK_STATUS" = "closed" ]; then
+      break
+    fi
+
+    TASK_INFO=$(td show "$TASK" 2>/dev/null || echo "$TASK")
+    jj new -m "$TASK_INFO"
+
+    # Skip blocked tasks - let outer loop pick another
+    if [ "$TASK_STATUS" = "blocked" ]; then
+      break
+    fi
+
+    # Provide context based on current status
+    STATUS_CONTEXT=""
+    case "$TASK_STATUS" in
+      open)
+        STATUS_CONTEXT="This task is OPEN. Start work with \`td start $TASK\`, then implement it. Use \`td log $TASK 'message'\` to log progress."
+        ;;
+      in_progress)
+        td focus "$TASK" 2>/dev/null || true
+        td log "$TASK" "Resumed work on task"
+        STATUS_CONTEXT="This task is IN_PROGRESS. Continue implementation with \`td focus $TASK\`. Use \`td log $TASK 'message'\` to log progress."
+        ;;
+      in_review)
+        STATUS_CONTEXT="This task is IN_REVIEW. Review your work and if ready, use \`td approve $TASK\` to close it. Use \`td log $TASK 'message'\` to log any additional work."
+        ;;
+    esac
+
+    TASK_SHOW_OUTPUT=$(td show "$TASK" 2>/dev/null || echo "Task: $TASK")
+    USAGE_OUTPUT=$(td usage --new-session 2>/dev/null || echo "")
+
+    PROMPT="Work on exactly one issue now: $TASK
+
+$STATUS_CONTEXT
+
+Task details:
+$TASK_SHOW_OUTPUT
+
+$USAGE_OUTPUT"
+
+    echo "Running opencode with prompt:"
+    echo "$PROMPT"
+    echo "---"
+    opencode run "$PROMPT" --model openrouter/stepfun/step-3.5-flash:free --thinking
+    jj describe -m "PROGRESS: $TASK_INFO"
+  done
+
+done
