@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+MODEL="${1:-openrouter/stepfun/step-3.5-flash:free}"
+shift 2>/dev/null || true
+
 while [ "$(td list)" != "No issues found" ]; do
   export TASK=$(td critical-path --json | jq -r '.critical_path[0]')
 
@@ -51,7 +54,7 @@ $USAGE_OUTPUT"
     echo "Running opencode with prompt:"
     echo "$PROMPT"
     echo "---"
-    opencode run "$PROMPT" --model openrouter/stepfun/step-3.5-flash:free --thinking
+    opencode run "$PROMPT" --model "$MODEL" "$@"
     jj describe -m "PROGRESS: $TASK_INFO"
   done
 
