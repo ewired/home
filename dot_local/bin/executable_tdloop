@@ -7,6 +7,11 @@ shift 2>/dev/null || true
 while [ "$(td list)" != "No issues found" ]; do
   export TASK=$(td critical-path --json | jq -r '.critical_path[0]')
 
+  # Skip if no valid task returned
+  if [ -z "$TASK" ] || [ "$TASK" = "null" ]; then
+    break
+  fi
+
   # Work on the same task until it's closed
   while true; do
     TASK_STATUS=$(td show "$TASK" --json 2>/dev/null | jq -r '.status' || echo "unknown")
