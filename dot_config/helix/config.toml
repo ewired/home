@@ -1,4 +1,4 @@
-theme = "base16_terminal"
+theme = "transparent-wolf-alabaster"
 
 [editor]
 inline-completion-timeout = 150
