@@ -11,6 +11,11 @@ diff-expected-exit-codes = [0, 1]
 name = "ewired"
 email = "ewired@tuyuji.com"
 
+[signing]
+behavior = "own"
+backend = "ssh"
+key = "~/.ssh/id_rsa.pub"
+
 [templates]
 draft_commit_description = '''
   concat(
