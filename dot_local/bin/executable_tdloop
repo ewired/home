@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+INVOKED_AS="$(basename "$0")"
+
 MODEL="${1:-openrouter/stepfun/step-3.5-flash:free}"
 shift 2>/dev/null || true
 
@@ -56,10 +58,17 @@ $TASK_SHOW_OUTPUT
 
 $USAGE_OUTPUT"
 
-    echo "Running opencode with prompt:"
-    echo "$PROMPT"
-    echo "---"
-    opencode run "$PROMPT" --model "$MODEL" "$@"
+    if [ "$INVOKED_AS" = "mtdloop" ]; then
+      echo "Running magnitude with prompt:"
+      echo "$PROMPT"
+      echo "---"
+      magnitude --oneshot "$PROMPT" --model "$MODEL" "$@"
+    else
+      echo "Running opencode with prompt:"
+      echo "$PROMPT"
+      echo "---"
+      opencode run "$PROMPT" --model "$MODEL" "$@"
+    fi
     jj describe -m "PROGRESS: $TASK_INFO"
   done
 
