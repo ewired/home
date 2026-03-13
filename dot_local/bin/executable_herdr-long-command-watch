@@ -1,0 +1,157 @@
+#!/usr/bin/env python3
+"""Herdr long-command watcher.
+
+Spawned in the background by the fish preexec hook. Lifecycle:
+
+  Phase 1: sleep for the threshold. If killed (SIGTERM) before the threshold
+           elapses, exit without reporting — the command was short and doesn't
+           deserve a fake agent status.
+
+  Phase 2: check whether the foreground command has put the TTY in raw mode
+           (interactive TUI). If so, exit without reporting. Otherwise report
+           a "working" agent status, then park waiting for SIGTERM.
+
+  Phase 3: on SIGTERM (the foreground command finished), report an "idle"
+           (completion) status, spawn a fully-detached linger process that
+           sleeps for a few seconds and then calls release-agent, and exit.
+
+Sequence numbers:
+  Each command gets three monotonically-increasing seq numbers from the
+  fish hook — working_seq, idle_seq, and release_seq. herdr's
+  accept_hook_report() rejects any report whose seq is <= the last seen
+  seq for the source. This means: if a new command starts during the
+  previous command's completion linger, the new command's working report
+  (higher seq) survives the old linger's release-agent call (lower seq)
+  — no clobbering.
+
+Killed by the fish postexec hook via SIGTERM.
+"""
+import os
+import signal
+import subprocess
+import sys
+import termios
+import time
+
+
+class _Terminated(Exception):
+    """Raised by the SIGTERM handler to interrupt blocking calls."""
+
+
+def main():
+    pane_id = os.environ.get("HERDR_PANE_ID", "").strip()
+    if not pane_id:
+        return 0
+
+    try:
+        threshold = float(os.environ.get("HERDR_LC_THRESHOLD", "3"))
+    except ValueError:
+        threshold = 3.0
+    source = os.environ.get("HERDR_LC_SOURCE", "herdr:fish-longcmd")
+    agent = os.environ.get("HERDR_LC_AGENT", "Fish")
+    cmd = os.environ.get("HERDR_LC_CMD", "")
+    completion_state = os.environ.get("HERDR_LC_COMPLETION_STATE", "idle")
+    try:
+        linger_sec = float(os.environ.get("HERDR_LC_LINGER_SEC", "5"))
+    except ValueError:
+        linger_sec = 5.0
+    working_seq = _parse_int(os.environ.get("HERDR_LC_WORKING_SEQ"))
+    idle_seq = _parse_int(os.environ.get("HERDR_LC_IDLE_SEQ"))
+    release_seq = _parse_int(os.environ.get("HERDR_LC_RELEASE_SEQ"))
+
+    signal.signal(signal.SIGTERM, _terminate)
+
+    # Phase 1 + 2: wait for threshold, then report working if non-interactive.
+    # If SIGTERM arrives at any point before we've reported working, bail out
+    # without reporting — the command was too short to surface.
+    reported_working = False
+    try:
+        time.sleep(threshold)
+        if not _tty_is_canonical():
+            return 0
+        _report(pane_id, source, agent, "working", working_seq, cmd)
+        reported_working = True
+        signal.pause()
+    except _Terminated:
+        if not reported_working:
+            return 0
+
+    # Phase 3: report completion, spawn a detached linger that will release
+    # after a few seconds. Ignore further SIGTERM so phase 3 always completes.
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    _report(pane_id, source, agent, completion_state, idle_seq, cmd)
+    _spawn_linger(pane_id, source, agent, release_seq, linger_sec)
+    return 0
+
+
+def _terminate(signum, frame):
+    raise _Terminated()
+
+
+def _parse_int(s):
+    try:
+        return int(s)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _report(pane_id, source, agent, state, seq, message):
+    if seq <= 0:
+        return
+    subprocess.run(
+        [
+            "herdr", "pane", "report-agent", pane_id,
+            "--source", source,
+            "--agent", agent,
+            "--state", state,
+            "--seq", str(seq),
+            "--message", message,
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+
+
+def _spawn_linger(pane_id, source, agent, release_seq, linger_sec):
+    """Spawn a fully-detached process that sleeps, then releases the agent.
+
+    Detached via start_new_session=True so it survives the watcher's exit
+    and is not tracked by fish's job control (no "job exited" notifications).
+    Uses release_seq (strictly greater than idle_seq) so herdr accepts the
+    release.
+    """
+    if release_seq <= 0:
+        return
+    subprocess.Popen(
+        [
+            "sh", "-c",
+            'sleep "$0" && exec herdr pane release-agent "$1" '
+            '--source "$2" --agent "$3" --seq "$4" 2>/dev/null',
+            str(linger_sec), pane_id, source, agent, str(release_seq),
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
+def _tty_is_canonical():
+    """True if the controlling TTY is in canonical+echo mode (non-interactive).
+
+    Interactive TUIs clear ICANON/ECHO when entering raw mode; long-running
+    non-interactive commands leave them intact. Returns False if /dev/tty
+    can't be opened (no controlling terminal).
+    """
+    try:
+        with open("/dev/tty", "rb") as tty:
+            attrs = termios.tcgetattr(tty.fileno())
+    except OSError:
+        return False
+    lflag = attrs[3]
+    flags_needed = termios.ICANON | termios.ECHO
+    return (lflag & flags_needed) == flags_needed
+
+
+if __name__ == "__main__":
+    sys.exit(main())

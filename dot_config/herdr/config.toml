@@ -1,0 +1,17 @@
+onboarding = false
+[ui]
+show_agent_labels_on_pane_borders = false
+prompt_new_tab_name = false
+pane_borders = false
+
+agent_panel_sort = "spaces"
+[ui.toast]
+delivery = "herdr"
+
+[keys]
+previous_workspace = "prefix+,"
+next_workspace = "prefix+."
+
+[theme]
+name = "catppuccin"
+auto_switch = false

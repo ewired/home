@@ -2,10 +2,6 @@
 
 [ui]
 diff-formatter = ["difft", "--color=always", "$left", "$right"]
-# diff-formatter = "delta"
-
-[merge-tools.delta]
-diff-expected-exit-codes = [0, 1]
 
 [user]
 name = "ewired"
@@ -62,83 +58,296 @@ separate(" ",
 
 
 [aliases]
-opencode = ["util", "exec", "--", "bash", "-c", """
+opencode-prompt = ["util", "exec", "--", "bash", "-c", """
 #!/usr/bin/env bash
 set -euo pipefail
 
-API=http://127.0.0.1:20202
+rev=${1:-@}
+description=$(jj log --no-graph -r "$rev" --template 'description')
 
-# Check if opencode is running
-if ! curl -sS "$API" > /dev/null 2>&1; then
-  echo "opencode is not running" 1>&2
-  exit 1
+if [ "$rev" = "@" ]; then
+  trail_revset='opencode_job_trail()'
+else
+  trail_revset=$(printf 'latest(::%s- & ~description(regex:"^(:: |:[a-zA-Z0-9_]+: )"))::%s' "$rev" "$rev")
 fi
 
-post() {
-  curl -sS -X POST -H "Content-Type: application/json" -d @- $API/$1 > /dev/null
-}
-
- jj edit ${1:-@} > /dev/null 2>&1
-
- if [ "$(jj diff -s)" != "" ]; then
-   echo "Current change is not clean, creating new change"
-   # Save current description before creating new change
-   current_description=$(jj log --no-graph -r @ --template 'description' 2>/dev/null || echo "")
-   jj new > /dev/null 2>&1
-   # Restore the description on the new change if we had one
-   if [ -n "$current_description" ]; then
-     jj describe -m "$current_description" > /dev/null 2>&1
-   fi
- fi
-
-echo '{"command": "session_new"}' | post tui/execute-command
-echo '{}' | post tui/clear-prompt
-
-description=$(jj log --no-graph -r @ --template 'description')
-
-
 if [ -n "$description" ]; then
-  # Strip "SUBMITTED: " prefix if present
-  clean_description=$(echo "$description" | sed 's/^SUBMITTED: //')
-  (\
-    jj newhunks 'opencode_job_trail()' | sed 's/^/@/'; \
-    jj diff --git -r 'opencode_job_trail()'; \
-    echo "\n\n# Instructions:\n"; \
-    echo "$clean_description" \
-  ) \
-    | jq -Rs '{text: .}' \
-    | post tui/append-prompt
-
-  echo '{}' | post tui/submit-prompt
-
-  echo "Parent diff and current diff's description were sent to opencode"
-
-  jj describe -m "SUBMITTED: $clean_description" > /dev/null 2>&1
-else
-  todos=$(jj find-todos 'opencode_job_trail()')
-  
-  if [ -n "$todos" ]; then
-    (\
-      jj newhunks 'opencode_job_trail()' | sed 's/^/@/'; \
-      jj diff --git -r 'opencode_job_trail()'; \
-      echo "\n\n# Instructions\n\nAddress these TODOs that were added in the changes:\n"; \
-      echo "$todos" \
-    ) \
-      | jq -Rs '{text: .}' \
-      | post tui/append-prompt
-
-    echo '{}' | post tui/submit-prompt
-
-    echo "Parent diff and extracted TODOs were sent to opencode"
-    
-    jj describe -m "SUBMITTED: Address TODOs in changes" > /dev/null 2>&1
+  clean_description=$(echo "$description" | sed -E 's/^:[a-zA-Z0-9_]+: //; s/^:: //; s/^: //')
+  if [ -n "$(jj diff --git -r "$trail_revset")" ]; then
+    prompt_text="# Instructions:\n\n$clean_description"
   else
+    prompt_text=$(echo "$clean_description" | sed '/./,$!d')
+  fi
+else
+  todos=$(jj find-todos "$trail_revset")
+  if [ -z "$todos" ]; then
     echo "No instructions or TODOs to send" 1>&2
     exit 1
   fi
+  prompt_text="# Instructions\n\nAddress these TODOs that were added in the changes:\n\n$todos"
+fi
+
+tmpfile=$(mktemp) || exit 1
+trap 'rm -f "$tmpfile"' EXIT
+jj diff --git -r "$trail_revset" > "$tmpfile"
+truncated=0
+if [ "$(wc -l < "$tmpfile")" -gt 500 ]; then
+  jj diff --summary -r "$trail_revset" > "$tmpfile"
+  truncated=1
+fi
+if [ -s "$tmpfile" ]; then
+  printf '# Changes already applied\n#\n# The diff below has already been applied to the working copy.\n# We are working on top of these changes; do not re-apply them.\n\n'
+  if [ "$truncated" -eq 1 ]; then
+    printf '# NOTE: The full diff is too large and only a summary is shown here.\n# Use `jj diff` to explore the actual changes.\n#\n'
+    printf '#   jj diff --git -r %s%s%s\n#\n' "'" "$trail_revset" "'"
+    printf '# To inspect a specific file, pass it as a positional argument:\n#\n'
+    printf '#   jj diff --git -r %s%s%s <path>\n#\n' "'" "$trail_revset" "'"
+    printf '# Multiple paths are accepted, and paths are relative to the repo root.\n#\n'
+    printf '# The revset `%s` selects the range of changes from the most\n' "$trail_revset"
+    printf '# recent non-instruction ancestor of %s (inclusive) up to %s (inclusive),\n' "${1:-@}" "${1:-@}"
+    printf '# i.e. the work already done for the current task.\n\n'
+  fi
+  cat "$tmpfile"
+  conflicts=$(jj resolve -l 2>/dev/null || true)
+  if [ -n "$conflicts" ]; then
+    printf '\n# Unresolved conflicts\n#\n# The following files have conflicts that need to be resolved:\n\n%s\n' "$conflicts"
+  fi
+  printf '\n%s\n' "$prompt_text"
+else
+  printf '%s\n' "$prompt_text"
 fi
 """, ""]
+
+opencode-files = ["util", "exec", "--", "bash", "-c", """
+#!/usr/bin/env bash
+set -euo pipefail
+jj newhunks 'opencode_job_trail()'
+""", ""]
+
+opencode-prepare = ["util", "exec", "--", "bash", "-c", """
+#!/usr/bin/env bash
+set -euo pipefail
+
+jj edit ${1:-@} > /dev/null 2>&1
+
+if [ "$(jj diff -s)" != "" ]; then
+  echo "Current change is not clean, creating new change" 1>&2
+  current_description=$(jj log --no-graph -r @ --template 'description' 2>/dev/null || echo "")
+  jj new > /dev/null 2>&1
+  if [ -n "$current_description" ]; then
+    jj describe -m "$current_description" > /dev/null 2>&1
+  fi
+fi
+""", ""]
+
+opencode-submit-description = ["util", "exec", "--", "bash", "-c", """
+#!/usr/bin/env bash
+set -euo pipefail
+
+description=$(jj log --no-graph -r @ --template 'description')
+
+if [ -n "$description" ]; then
+  clean_description=$(echo "$description" | sed -E 's/^:[a-zA-Z0-9_]+: //; s/^:: //; s/^: //')
+  printf ':: %s\n' "$clean_description"
+else
+  todos=$(jj find-todos 'opencode_job_trail()')
+  if [ -n "$todos" ]; then
+    printf ':: Address TODOs in changes:\n\n%s\n' "$todos"
+  else
+    printf ':: Address TODOs in changes\n'
+  fi
+fi
+""", ""]
+
+opencode-run = ["util", "exec", "--", "bash", "-c", """
+#!/usr/bin/env bash
+set -euo pipefail
+
+jj opencode-prepare ${1:-@}
+content=$(jj opencode-prompt)
+submit_msg=$(jj opencode-submit-description)
+
+echo "--- prompt ---"
+echo "$content"
+echo "--- end prompt ---"
+tmpfile=$(mktemp) || exit 1
+trap 'rm -f "$tmpfile"' EXIT
+echo "$content" | opencode run --print-logs 2>&1 | tee "$tmpfile"
+log_output=$(<"$tmpfile")
+session_id=$(echo "$log_output" | grep -oP 'session\\.id=\\K[a-zA-Z0-9_]+' | head -1)
+
+if [ -n "$session_id" ]; then
+  submit_msg=$(echo "$submit_msg" | sed "s/^:: /:$session_id: /")
+fi
+
+jj describe -m "$submit_msg" > /dev/null 2>&1
+""", ""]
+
+opencode-send = ["util", "exec", "--", "bash", "-c", """
+#!/usr/bin/env bash
+set -euo pipefail
+
+PORT=${OPENCODE_PORT:-20202}
+API=http://127.0.0.1:$PORT
+REPO_DIR=$(jj root)
+DIRECTORY_QUERY=$(jq -rn --arg dir "$REPO_DIR" '$dir | @uri')
+
+post() {
+  curl -sS -X POST \
+    -H "Content-Type: application/json" \
+    -d @- \
+    "$API/$1?directory=$DIRECTORY_QUERY"
+}
+
+post_quiet() {
+  post "$1" > /dev/null
+}
+
+build_prompt_async_payload() {
+  local parts text hunk file_path abs_path display_name file_url start end part
+
+  text="$content"
+  parts=$(jq -n --arg text "$text" '[{type: "text", text: $text}]')
+
+  while IFS= read -r hunk; do
+    [ -n "$hunk" ] || continue
+
+    start=
+    end=
+    file_path="$hunk"
+    if [[ "$hunk" =~ ^(.+):([0-9]+)-([0-9]+)$ ]]; then
+      file_path="${BASH_REMATCH[1]}"
+      start="${BASH_REMATCH[2]}"
+      end="${BASH_REMATCH[3]}"
+    fi
+
+    abs_path=$(realpath -m "$REPO_DIR/$file_path")
+    display_name="$hunk"
+
+    if [ -n "$start" ] && [ -n "$end" ]; then
+      file_url=$(jq -rn --arg path "$abs_path" --arg start "$start" --arg end "$end" '"file://" + ($path | split("/") | map(@uri) | join("/")) + "?start=" + $start + "&end=" + $end')
+    else
+      file_url=$(jq -rn --arg path "$abs_path" '"file://" + ($path | split("/") | map(@uri) | join("/"))')
+    fi
+
+    part=$(jq -n \
+      --arg url "$file_url" \
+      --arg filename "$display_name" \
+      '{type: "file", mime: "text/plain", url: $url, filename: $filename}')
+    parts=$(jq -n --argjson parts "$parts" --argjson part "$part" '$parts + [$part]')
+  done < <(jj opencode-files)
+
+  jq -n --argjson parts "$parts" '{parts: $parts}'
+}
+
+jj opencode-prepare ${1:-@}
+content=$(jj opencode-prompt)
+submit_msg=$(jj opencode-submit-description)
+
+session_id=$(printf '{}' | post session | jq -e -r '.id')
+if [ -z "$session_id" ] || [ "$session_id" = "null" ]; then
+  echo "Failed to create opencode session" 1>&2
+  exit 1
+fi
+
+build_prompt_async_payload | post_quiet "session/$session_id/prompt_async"
+
+submit_msg=$(echo "$submit_msg" | sed "s/^:: /:$session_id: /")
+
+jj describe -m "$submit_msg" > /dev/null 2>&1
+printf '%s\n' "$session_id"
+""", ""]
+
+opencode = ["opencode-send"]
 oc = ["opencode"]
+
+# https://isaaccorbrey.com/notes/jujutsu-megamerges-for-fun-and-profit#tldr
+stack = ["rebase", "--after", "trunk()", "--before", "closest_merge(@)", "--revision"]
+stage = ["stack", "closest_merge(@)+:: ~ empty()"]
+restack = ["rebase", "--onto", "trunk()", "--source", "roots(trunk()..) & mutable()", "--simplify-parents"]
+# Like `restack`, but if trunk() conflicts, binary-searches trunk history for the newest ancestor that rebases cleanly (https://docs.jj-vcs.dev/latest/cli-reference/#jj-bisect).
+restack-safe = ["util", "exec", "--", "bash", "-c", """
+#!/usr/bin/env bash
+set -euo pipefail
+SRC='roots(trunk()..) & mutable()'
+RANGE='(roots(trunk()..) & mutable())-..trunk()'
+precheck=$(jj --no-integrate-operation rebase -s "$SRC" -o 'trunk()' 2>&1 || true)
+case "$precheck" in
+  *"New conflicts"*) ;;
+  *) jj rebase -s "$SRC" -o 'trunk()' --simplify-parents; exit 0 ;;
+esac
+pre=$(jj op log -n1 --no-graph -T 'id')
+bad=$(jj bisect run --range "$RANGE" -- bash -c 'o=$(jj --no-integrate-operation rebase -s "roots(trunk()..) & mutable()" -o "$JJ_BISECT_TARGET" 2>&1); case "$o" in *"New conflicts"*) exit 1;; *) exit 0;; esac' 2>&1 | sed -nE 's/^The first bad revision is: ([^ ]+).*/\\1/p')
+jj op restore "$pre" >/dev/null 2>&1
+if [ -z "$bad" ]; then
+  jj rebase -s "$SRC" -o 'trunk()' --simplify-parents
+else
+  jj rebase -s "$SRC" -o "$bad-" --simplify-parents
+fi
+"""]
+
+opencode-send-attach = ["util", "exec", "--", "bash", "-c", """
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_DIR=$(jj root)
+
+rev="${1:-@}"
+
+# If not already a valid prompt, set it to one and exit
+description=$(jj log --no-graph -r "$rev" --template 'description' 2>/dev/null || echo "")
+if [ -n "$description" ]; then
+  clean=$(echo "$description" | sed -E 's/^:[a-zA-Z0-9_]+: //; s/^:: //; s/^: //')
+  if [ "$description" != ": $clean" ]; then
+    jj describe "$rev" -m ": $clean" > /dev/null 2>&1
+    exit 0
+  fi
+fi
+
+# Check if there's a description or TODOs
+if ! prompt=$(jj opencode-prompt "$rev" 2>/dev/null); then
+  jj edit "$rev"
+  parent_description=$(jj log --no-graph -r "$rev-" --template 'description' 2>/dev/null || echo "")
+  session_id=$(echo "$parent_description" | sed -nE 's/^:([a-zA-Z0-9_]+): .*/\\1/p' | head -1)
+  if [ -n "$session_id" ]; then
+    opencode "$REPO_DIR" --session "$session_id"
+  else
+    opencode "$REPO_DIR"
+  fi
+  exit $?
+else
+  PORT=$(( (RANDOM % 30000) + 30000 ))
+
+  # Background: wait for TUI's server to be ready, then send the prompt
+  (
+    ready=0
+    for i in $(seq 1 50); do
+      if curl -sS --connect-timeout 0.2 --max-time 0.5 "http://127.0.0.1:$PORT/session" >/dev/null 2>&1; then
+        ready=1
+        break
+      fi
+      sleep 0.1
+    done
+    if [ "$ready" -ne 1 ]; then
+      exit 1
+    fi
+    set +e
+    session_id=$(OPENCODE_PORT=$PORT jj opencode-send "${1:-@}")
+    send_exit=$?
+    set -e
+    if [ "$send_exit" -eq 0 ] && [ -n "$session_id" ]; then
+      DIRECTORY_QUERY=$(jq -rn --arg dir "$REPO_DIR" '$dir | @uri')
+      curl -sS -X POST \
+        -H "Content-Type: application/json" \
+        -d "$(jq -n --arg id "$session_id" '{sessionID: $id}')" \
+        "http://127.0.0.1:$PORT/tui/select-session?directory=$DIRECTORY_QUERY" >/dev/null 2>&1
+    fi
+  ) &
+
+  # Start TUI - its server will receive the requests from the background subshell
+  opencode "$REPO_DIR" --port "$PORT"
+fi
+""", ""]
 
 opencode-jobs = ["log", "--no-graph", "--reversed", "--template", 'change_id ++ "\n"', "-r", "opencode_job()"]
 
@@ -160,20 +369,19 @@ jj diff -r "${1:-@}" --git | awk '
   }'
 """, ""]
 
-opencode-next-job = ["util", "exec", "--", "bash", "-c", """
+opencode-run-all = ["util", "exec", "--", "bash", "-c", """
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Find the first descendant empty commit with a description
-target_change=$(jj opencode-jobs | head -n 1)
-
-if [ -z "$target_change" ]; then
-  echo "No opencode job found (empty mutable tip with non-empty description)" 1>&2
-  exit 1
-fi
-
-echo "Found empty commit with description: $target_change"
-jj opencode "$target_change"
+while true; do
+  target_change=$(jj opencode-jobs | head -n 1)
+  if [ -z "$target_change" ]; then
+    echo "No more opencode jobs remaining" 1>&2
+    break
+  fi
+  echo "Running opencode-run on: $target_change"
+  jj opencode-run "$target_change"
+done
 """, ""]
 
 append-files = ["util", "exec", "--", "bash", "-c", """
@@ -223,10 +431,10 @@ set -euo pipefail
 editor_args=""
 for file in "$@"; do
   line=$(jj diff -r "latest(files('$file') & ::@)" --git --context 0 "$file" | awk '
-    /^@@/ {
+    /^@@/ && !found {
       if (match($0, /@@ -([0-9]+)(,([0-9]+))? \\+([0-9]+)(,([0-9]+))? @@/, arr)) {
         print arr[4]
-        exit
+        found = 1
       }
     }')
   if [ -n "$line" ]; then
@@ -239,37 +447,7 @@ done
 ${EDITOR:-vim} $editor_args
 """, ""]
 
-run-set = ["util", "exec", "--", "bash", "-c", """
-#!/usr/bin/env bash
-set -euo pipefail
-
-cleanup() {
-  echo -e "\nInterrupted, stopping..."
-  kill -- -$$ 2>/dev/null || true
-  exit 130
-}
-trap cleanup INT TERM
-
-if [ $# -lt 2 ]; then
-  echo "Usage: jj run-set <revset> <command...>" 1>&2
-  exit 1
-fi
-
-revset="$1"
-shift
-
-for change in $(jj log --no-graph --reversed -r "$revset" --template 'change_id ++ "\n"'); do
-  jj edit "$change" > /dev/null 2>&1
-  jj new > /dev/null 2>&1
-  if "$@"; then
-    jj describe -m "exit 0: $*" > /dev/null 2>&1
-  else
-    exit_code=$?
-    jj describe -m "exit $exit_code: $*" > /dev/null 2>&1
-  fi
-done
-""", ""]
-
 [revset-aliases]
-'opencode_job()' = '~@ & mutable() & (empty() ~ ::(~empty())) & ~description(exact:"") & ~description(regex:"^SUBMITTED: ")'
-'opencode_job_trail()' = 'latest(::@- & ~description(regex:"^SUBMITTED: "))::@'
+'opencode_job()' = 'mutable() & (empty() ~ ::(~empty())) & description(regex:"^: ")'
+'opencode_job_trail()' = 'latest(::@- & ~description(regex:"^(:: |:[a-zA-Z0-9_]+: )"))::@'
+"closest_merge(to)" = "heads(::to & merges())" # https://isaaccorbrey.com/notes/jujutsu-megamerges-for-fun-and-profit#tldr

@@ -1,70 +1,263 @@
-[custom_commands]
-"fix" = { key = ["F"], args = ["fix", "-s", "$checked_commit_ids"] }
+[[actions]]
+name = "fix"
+lua = '''
+local ids = context.checked_commit_ids()
+if #ids == 0 then
+  flash({ text = "No checked commits", error = true })
+  return
+end
+jj_async({ "fix", "-s", table.unpack(ids) })
+revisions.refresh()
+'''
 
-[custom_commands."resolve mergiraf"]
-key = ["!"]
-args = ["resolve", "--tool", "mergiraf", "-r", "$change_id"]
+[[bindings]]
+action = "fix"
+key = "F"
+scope = "revisions"
+desc = "fix checked commits"
 
-[custom_commands."new note commit after"]
-key = ["N"]
-args = ["new", "--no-edit", "-A", "$change_id"]
+[[actions]]
+name = "resolve-mergiraf"
+lua = '''
+local change_id = context.change_id()
+if not change_id then
+  flash({ text = "No change selected", error = true })
+  return
+end
+jj_interactive("resolve", "--tool", "mergiraf", "-r", change_id)
+'''
 
-[custom_commands."opencode"]
-key = ["O"]
-args = ["opencode", "$change_id"]
+[[bindings]]
+action = "resolve-mergiraf"
+key = "!"
+scope = "revisions"
+desc = "resolve with mergiraf"
 
-[custom_commands."opencode commit"]
-key = ["C"]
-args = ["occ", "$change_id"]
+[[actions]]
+name = "new-note-commit-after"
+lua = '''
+local change_id = context.change_id()
+if not change_id then
+  flash({ text = "No change selected", error = true })
+  return
+end
+jj_async("new", "--no-edit", "-A", change_id)
+revisions.refresh()
+'''
 
-[custom_commands."append files to desc"]
-key = ["ctrl+f"]
-args = ["append-files", "$change_id"]
-show = "interactive"
+[[bindings]]
+action = "new-note-commit-after"
+key = "N"
+scope = "revisions"
+desc = "new note commit after"
 
-[custom_commands."copy for opencode"]
-key = ["ctrl+o"]
-args = ["util", "exec", "--", "bash", "-c", """
-echo "$@" \
-  | sed 's/[[:space:]]\\+/ /g' \
-  | tr ' ' '\n' \
-  | grep -v '^[$]checked_files' \
-  | sed 's/file:"\\([^"]*\\)"/\\1/g' \
-  | sort -u \
-  | sed 's/^/@/' \
-  | tr '\n' ' ' \
-  | wl-copy
-""", "", "$checked_files", "$file"]
+[[actions]]
+name = "opencode-send-attach"
+lua = '''
+local change_id = context.change_id()
+if not change_id then
+  flash({ text = "No change selected", error = true })
+  return
+end
 
-[custom_commands."diff to working"]
-key = ["ctrl+d"]
-args = ["diff", "-r", "$change_id::@"]
-show = "diff"
+local description, err = jj("log", "--no-graph", "-r", change_id, "--template", "description")
+if not description or err then
+  exec_shell("jj opencode-send-attach " .. change_id)
+else
+  if string.match(description, "^: .+") then
+    exec_shell("jj opencode-send-attach " .. change_id)
+  else
+    jj_interactive("opencode-send-attach", change_id)
+  end
+end
+revisions.refresh()
+'''
 
-[custom_commands."delta"]
-key = ["#"]
-args = ["diff", "--tool", "delta", "-r", "$change_id"]
-show = "diff"
+[[bindings]]
+action = "opencode-send-attach"
+key = "O"
+scope = "revisions"
+desc = "opencode send and attach"
 
-[custom_commands."editor"]
-key = ["ctrl+e"]
-show = "interactive"
-args = ["util", "exec", "--", "bash", "-c", """
-jj edit-with-lines $( echo "$@" \
-  | sed 's/[[:space:]]\\+/ /g' \
-  | tr ' ' '\n' \
-  | grep -v '^[$]checked_files' \
-  | sed 's/file:"\\([^"]*\\)"/\\1/g' \
-  | sort -u | tac \
-  | tr '\n' ' ' )
-""", "", "$checked_files", "$file"]
+[[actions]]
+name = "append-files-to-desc"
+lua = '''
+local change_id = context.change_id()
+if not change_id then
+  flash({ text = "No change selected", error = true })
+  return
+end
+jj_interactive("append-files", change_id)
+revisions.refresh()
+'''
 
-[leader.e]
-context = [ "$file", "$change_id" ]
-help = "Edit file in @"
-send = [ "$", "$EDITOR $file", "enter" ]
+[[bindings]]
+action = "append-files-to-desc"
+key = "ctrl+f"
+scope = "revisions"
+desc = "append files to desc"
 
-[leader.E]
-context = [ "$file", "$change_id" ]
-help = "Edit file in change"
-send = [ "$", "jj edit \"$change_id\" && $EDITOR $file", "enter" ]
+[[actions]]
+name = "append-file-to-working-desc"
+lua = '''
+local file = context.file()
+if not file then
+  flash({ text = "No file selected", error = true })
+  return
+end
+
+-- Get current description for working revision
+local current_desc, err = jj("log", "--no-graph", "-r", "@", "--template", "description")
+if err then
+  flash({ text = err, error = true })
+  return
+end
+
+-- Create new description with @ prefix for the file
+local new_desc
+if current_desc and current_desc ~= "" then
+  new_desc = current_desc:gsub("^%s*", ""):gsub("%s*$", "") .. " @" .. file
+else
+  new_desc = "@" .. file
+end
+
+-- Update the description of working revision
+local _, describe_err = jj("describe", "-r", "@", "-m", new_desc)
+if describe_err then
+  flash({ text = describe_err, error = true })
+  return
+end
+
+flash("Appended @" .. file .. " to @ description")
+revisions.refresh()
+'''
+
+[[bindings]]
+action = "append-file-to-working-desc"
+key = "ctrl+f"
+scope = "revisions.details"
+desc = "append file to @ desc"
+
+[[actions]]
+name = "opencode-run-all"
+lua = '''
+jj_interactive("opencode-run-all")
+revisions.refresh()
+'''
+
+[[bindings]]
+action = "opencode-run-all"
+key = "ctrl+o"
+scope = "revisions"
+desc = "opencode run all jobs"
+
+[[actions]]
+name = "diff-to-working"
+lua = '''
+local change_id = context.change_id()
+if not change_id then
+  flash({ text = "No change selected", error = true })
+  return
+end
+local file = context.file()
+local output, err
+if file then
+  output, err = jj("diff", "-r", change_id .. "::@", "--", file)
+else
+  output, err = jj("diff", "-r", change_id .. "::@")
+end
+if err then
+  flash({ text = err, error = true })
+else
+  diff.show(output)
+end
+'''
+
+[[bindings]]
+action = "diff-to-working"
+key = "ctrl+d"
+scope = "revisions"
+desc = "diff to working"
+
+[[bindings]]
+action = "diff-to-working"
+key = "ctrl+d"
+scope = "revisions.details"
+desc = "diff file to working"
+
+[[actions]]
+name = "editor"
+lua = '''
+local files = context.checked_files()
+if #files == 0 then
+  local file = context.file()
+  if file then
+    files = { file }
+  end
+end
+if #files == 0 then
+  flash({ text = "No files selected", error = true })
+  return
+end
+table.sort(files)
+for i = 1, math.floor(#files / 2) do
+  files[i], files[#files - i + 1] = files[#files - i + 1], files[i]
+end
+local cmd = "jj edit-with-lines"
+for _, file in ipairs(files) do
+  cmd = cmd .. " " .. string.format("%q", file)
+end
+exec_shell(cmd)
+'''
+
+[[bindings]]
+action = "editor"
+key = "ctrl+e"
+scope = "revisions.details"
+desc = "edit selected files"
+
+[[actions]]
+name = "leader-edit-file-in-working"
+lua = '''
+local file = context.file()
+if not file then
+  flash({ text = "No file selected", error = true })
+  return
+end
+local editor = os.getenv("EDITOR")
+if not editor or editor == "" then
+  flash({ text = "$EDITOR is not set", error = true })
+  return
+end
+exec_shell(string.format("%s %q", editor, file))
+'''
+
+[[bindings]]
+action = "leader-edit-file-in-working"
+seq = ["\\", "e"]
+scope = "revisions.details"
+desc = "Edit file in @"
+
+[[actions]]
+name = "leader-edit-file-in-change"
+lua = '''
+local file = context.file()
+local change_id = context.change_id()
+if not file or not change_id then
+  flash({ text = "Need file and change selected", error = true })
+  return
+end
+local editor = os.getenv("EDITOR")
+if not editor or editor == "" then
+  flash({ text = "$EDITOR is not set", error = true })
+  return
+end
+exec_shell(string.format("jj edit %q && %s %q", change_id, editor, file))
+revisions.refresh()
+'''
+
+[[bindings]]
+action = "leader-edit-file-in-change"
+seq = ["\\", "E"]
+scope = "revisions.details"
+desc = "Edit file in change"
