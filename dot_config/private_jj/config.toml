@@ -135,32 +135,6 @@ fi
 """, ""]
 oc = ["opencode"]
 
-occ = ["util", "exec", "--", "bash", "-c", """
-#!/usr/bin/env bash
-set -euo pipefail
-
-API=http://127.0.0.1:20202
-
-# Check if opencode is running
-if ! curl -sS "$API" > /dev/null 2>&1; then
-  echo "opencode is not running" 1>&2
-  exit 1
-fi
-
-post() {
-  curl -sS -X POST -H "Content-Type: application/json" -d @- $API/$1 > /dev/null
-}
-
-jj edit ${1:-@} > /dev/null 2>&1
-
-if [ -z "$(jj diff -s)" ]; then echo "No changes to describe with opencode" 1>&2; exit 1; fi
-
-echo '{"command": "session_new"}' | post tui/execute-command
-echo '{}' | post tui/clear-prompt
-echo '{"text": "/commit"}' | post tui/append-prompt
-echo '{}' | post tui/submit-prompt
-""", ""]
-
 opencode-jobs = ["log", "--no-graph", "--reversed", "--template", 'change_id ++ "\n"', "-r", "opencode_job()"]
 
 newhunks = ["util", "exec", "--", "bash", "-c", """
