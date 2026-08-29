@@ -1,0 +1,96 @@
+{
+  // nobs configuration; // and /* */ comments are allowed.
+
+  // Save the session when Ctrl+C is pressed.
+  "ctrlc_saves": true,
+
+  // Title model for the built-in ClosedRouter credential (a small/cheap model
+  // is best), and the fallback for any provider that names no `title_model` of
+  // its own in providers/*.toml. Empty turns the fallback off, leaving a
+  // provider without a title model untitled. Overridable at runtime with the
+  // NOBS_TITLE_MODEL env var, which wins over every provider.
+  "title_model": "title-gen",
+
+  // Model used by the `explore` subagent; empty = the parent agent's model.
+  // Overridable at runtime with the NOBS_EXPLORE_MODEL env var.
+  "explore_model": "",
+
+  // Identify each workspace with a marker file, so its session history follows
+  // the directory when it moves or is renamed. The marker lives in the git dir
+  // (invisible to `git status`, never committed), or in `.nobs/repo-id` outside
+  // a checkout. Set false to keep identities in the session store instead,
+  // keyed by absolute path: nothing is written into the workspace, but moving
+  // one orphans its history. Overridable with the NOBS_REPO_MARKER env var.
+  "repo_marker": true,
+
+  // Providers: add one TOML file per provider under `providers/` in this
+  // directory (e.g. providers/router.toml) to configure an API endpoint, its
+  // auth (env var, literal key, or command), and model metadata — optionally
+  // sourced from https://models.dev. When a provider's /models endpoint lags
+  // behind the models it actually serves, add `models_dev_catalog = true` to
+  // offer the catalog's models too. Codex is built in (OAuth), not a
+  // provider file: use `nobs --codex-login`. See the seeded `.env` for an
+  // example.
+
+  // Sandbox grants: the agent may request read-only access to specific host
+  // paths (by absolute path) via the `grant` tool; each request must be
+  // confirmed by the user and applies for the rest of the session.
+
+  // TUI palette: "nobs", "monochrome", or "pinq".
+  "theme": "nobs",
+
+  // Spinner animation: "heartbeat", "braille", "line", "orbit", "twinkle",
+  // "pulse", "arc", or "off" (no glyph; the busy label still sparkles).
+  "spinner_theme": "arc",
+
+  // Metadata source for the built-in ClosedRouter credential (OPENAI_API_KEY):
+  // "api" (default, its own /models response wins — ClosedRouter /models is
+  // already rich) or "models_dev" (models.dev is authoritative).
+  "metadata_mode": "api",
+
+  // Use your ChatGPT (Codex) subscription. Off by default: nobs does not read,
+  // or refresh, the login the `codex` CLI keeps in ~/.codex/auth.json until
+  // this is enabled (or you run `nobs --codex-login`). Enabling it lifts that
+  // login into nobs' own store (~/.local/state/nobs/auth/codex.json) once;
+  // the Codex file itself is never written. Takes effect on the next launch
+  // (credentials are resolved at startup).
+  "codex_auth": false,
+
+  // Use your Claude Code subscription. Off by default: nobs does not read, and
+  // never refreshes or rewrites, the tokens the `claude` CLI keeps in
+  // ~/.claude/.credentials.json until this is enabled. Enabling it lifts that
+  // login into nobs' own store (~/.local/state/nobs/auth/claude.json) once;
+  // the Claude file itself is never written. Takes effect on the next launch
+  // (credentials are resolved at startup).
+  "claude_auth": false,
+
+  "sandbox": {
+    // Extra host paths bound into the sandbox, e.g.
+    // { "source": "/host/path", "dest": "/sandbox/path", "read_only": true }
+    "extra_binds": [],
+
+    // Which host environment variables the sandboxed shell inherits:
+    // "blocklist" (the default — drop credential-looking names),
+    // "allowlist" (pass only names nobs knows a toolchain needs), or
+    // "off" (no filtering — the shell inherits this process's whole
+    // environment, provider keys included). Overrides:
+    // "env_passthrough" names that always cross, "env_block" names that never do.
+    "env_filter": "blocklist",
+
+    // How git is guarded inside the sandbox:
+    // "off" (the default -- no shim), "safe" (refuse the commands that destroy
+    // work: force push, reset --hard, clean -f, worktree-discarding
+    // checkout/restore, branch -D, stash drop, ref pruning), or "jj" (safe,
+    // plus: in a colocated repo every mutating git command is refused with its
+    // jj equivalent, and the model is told to use jj). The guard exists only
+    // inside the sandbox; your own shell is untouched.
+    "git_mode": "off",
+
+    // Whether the host Podman proxy (--podman-host) forwards `podman push`.
+    // True by default: a push only ships an image the session itself built.
+    // Set false to deny pushes outright, so the agent can never spend the
+    // registry logins the host keeps; every other proxied operation is
+    // unaffected.
+    "podman_host_push": true
+  }
+}

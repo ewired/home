@@ -58,25 +58,28 @@ separate(" ",
 
 
 [aliases]
-opencode-prompt = ["util", "exec", "--", "bash", "-c", """
+agent-prompt = ["util", "exec", "--", "bash", "-c", """
 #!/usr/bin/env bash
 set -euo pipefail
 
 rev=${1:-@}
 description=$(jj log --no-graph -r "$rev" --template 'description')
+prompt_text=""
 
 if [ "$rev" = "@" ]; then
-  trail_revset='opencode_job_trail()'
+  trail_revset='agent_job_trail()'
 else
-  trail_revset=$(printf 'latest(::%s- & ~description(regex:"^(:: |:[a-zA-Z0-9_]+: )"))::%s' "$rev" "$rev")
+  trail_revset=$(printf 'latest(::%s- & ~description(regex:"^(:: |:[a-zA-Z0-9_-]+: )"))::%s' "$rev" "$rev")
 fi
 
 if [ -n "$description" ]; then
-  clean_description=$(echo "$description" | sed -E 's/^:[a-zA-Z0-9_]+: //; s/^:: //; s/^: //')
-  if [ -n "$(jj diff --git -r "$trail_revset")" ]; then
-    prompt_text="# Instructions:\n\n$clean_description"
-  else
-    prompt_text=$(echo "$clean_description" | sed '/./,$!d')
+  clean_description=$(echo "$description" | sed -E 's/^:[a-zA-Z0-9_-]+: *//; s/^:: //; s/^: //')
+  if [ -n "$clean_description" ]; then
+    if [ -n "$(jj diff --git -r "$trail_revset")" ]; then
+      prompt_text="# Instructions:\n\n$clean_description"
+    else
+      prompt_text=$(echo "$clean_description" | sed '/./,$!d')
+    fi
   fi
 else
   todos=$(jj find-todos "$trail_revset")
@@ -85,6 +88,11 @@ else
     exit 1
   fi
   prompt_text="# Instructions\n\nAddress these TODOs that were added in the changes:\n\n$todos"
+fi
+
+if [ -z "$prompt_text" ]; then
+  # Nothing meaningful to send (empty description, no TODOs): stay quiet.
+  exit 0
 fi
 
 tmpfile=$(mktemp) || exit 1
@@ -118,148 +126,137 @@ else
 fi
 """, ""]
 
-opencode-files = ["util", "exec", "--", "bash", "-c", """
+agent-files = ["util", "exec", "--", "bash", "-c", """
 #!/usr/bin/env bash
 set -euo pipefail
-jj newhunks 'opencode_job_trail()'
+jj newhunks 'agent_job_trail()'
 """, ""]
 
-opencode-prepare = ["util", "exec", "--", "bash", "-c", """
-#!/usr/bin/env bash
-set -euo pipefail
-
-jj edit ${1:-@} > /dev/null 2>&1
-
-if [ "$(jj diff -s)" != "" ]; then
-  echo "Current change is not clean, creating new change" 1>&2
-  current_description=$(jj log --no-graph -r @ --template 'description' 2>/dev/null || echo "")
-  jj new > /dev/null 2>&1
-  if [ -n "$current_description" ]; then
-    jj describe -m "$current_description" > /dev/null 2>&1
-  fi
-fi
-""", ""]
-
-opencode-submit-description = ["util", "exec", "--", "bash", "-c", """
+agent-submit-description = ["util", "exec", "--", "bash", "-c", """
 #!/usr/bin/env bash
 set -euo pipefail
 
 description=$(jj log --no-graph -r @ --template 'description')
 
 if [ -n "$description" ]; then
-  clean_description=$(echo "$description" | sed -E 's/^:[a-zA-Z0-9_]+: //; s/^:: //; s/^: //')
+  clean_description=$(echo "$description" | sed -E 's/^:[a-zA-Z0-9_-]+: *//; s/^:: //; s/^: //')
   printf ':: %s\n' "$clean_description"
 else
-  todos=$(jj find-todos 'opencode_job_trail()')
+  todos=$(jj find-todos 'agent_job_trail()')
   if [ -n "$todos" ]; then
     printf ':: Address TODOs in changes:\n\n%s\n' "$todos"
-  else
-    printf ':: Address TODOs in changes\n'
   fi
 fi
 """, ""]
 
-opencode-run = ["util", "exec", "--", "bash", "-c", """
+nobs-prepare = ["util", "exec", "--", "bash", "-c", """
 #!/usr/bin/env bash
 set -euo pipefail
 
-jj opencode-prepare ${1:-@}
-content=$(jj opencode-prompt)
-submit_msg=$(jj opencode-submit-description)
+rev=${1:-@}
+jj edit "$rev" >/dev/null 2>&1 || true
 
-echo "--- prompt ---"
-echo "$content"
-echo "--- end prompt ---"
-tmpfile=$(mktemp) || exit 1
-trap 'rm -f "$tmpfile"' EXIT
-echo "$content" | opencode run --print-logs 2>&1 | tee "$tmpfile"
-log_output=$(<"$tmpfile")
-session_id=$(echo "$log_output" | grep -oP 'session\\.id=\\K[a-zA-Z0-9_]+' | head -1)
-
-if [ -n "$session_id" ]; then
-  submit_msg=$(echo "$submit_msg" | sed "s/^:: /:$session_id: /")
+# Resolve the session: a `:ID:` prefix on this change resumes that id; a
+# blank change stacked on a session commit resumes the parent's id (only
+# when this change has no description); otherwise mint a new one, record it
+# in the description (`:UUID: description`), and mark "new".
+current=$(jj log --no-graph -r @ --template 'description' 2>/dev/null || true)
+session_id=$(printf '%s\n' "$current" | sed -nE 's/^:([a-zA-Z0-9_-]+): *.*/\\1/p' | head -1)
+status=resumed
+if [ -z "$session_id" ] && [ -z "$(printf '%s' "$current" | tr -d '[:space:]')" ]; then
+  parent=$(jj log --no-graph -r @- --template 'description' 2>/dev/null || true)
+  session_id=$(printf '%s\n' "$parent" | sed -nE 's/^:([a-zA-Z0-9_-]+): *.*/\\1/p' | head -1)
+fi
+if [ -z "$session_id" ]; then
+  status=new
+  session_id=$(uuidgen | tr '[:upper:]' '[:lower:]')
+  submit_msg=$(jj agent-submit-description)
+  submit_msg=$(printf '%s' "$submit_msg" | sed "s/^:: /:$session_id: /")
+  if [ -z "$submit_msg" ]; then
+    # Nothing to send (no description, no TODOs): still stamp the bare
+    # :ID: marker so the commit stays bound to the new session.
+    submit_msg=":$session_id:"
+  fi
+  jj describe -m "$submit_msg" >/dev/null 2>&1 || true
 fi
 
-jj describe -m "$submit_msg" > /dev/null 2>&1
+# Build the message: attach the job trail's hunks as --file arguments, then
+# the prompt (or TODOs) as the first message.
+prompt=$(jj agent-prompt "$rev") || prompt=""
+files=()
+while IFS= read -r hunk; do
+  [ -n "$hunk" ] || continue
+  files+=("$hunk")
+done < <(jj agent-files 2>/dev/null)
+
+# Emit NUL-separated fields: session id, new|resumed, prompt, then files.
+printf '%s\\0' "$session_id" "$status" "$prompt" "${files[@]}"
 """, ""]
 
-opencode-send = ["util", "exec", "--", "bash", "-c", """
+nobs = ["util", "exec", "--", "bash", "-c", """
 #!/usr/bin/env bash
 set -euo pipefail
 
-PORT=${OPENCODE_PORT:-20202}
-API=http://127.0.0.1:$PORT
-REPO_DIR=$(jj root)
-DIRECTORY_QUERY=$(jq -rn --arg dir "$REPO_DIR" '$dir | @uri')
+prepared=()
+while IFS= read -r -d '' field; do
+  prepared+=("$field")
+done < <(jj nobs-prepare "${1:-@}")
 
-post() {
-  curl -sS -X POST \
-    -H "Content-Type: application/json" \
-    -d @- \
-    "$API/$1?directory=$DIRECTORY_QUERY"
-}
+session_id=${prepared[0]:-}
+status=${prepared[1]:-}
+prompt=${prepared[2]:-}
+files=("${prepared[@]:3}")
 
-post_quiet() {
-  post "$1" > /dev/null
-}
-
-build_prompt_async_payload() {
-  local parts text hunk file_path abs_path display_name file_url start end part
-
-  text="$content"
-  parts=$(jq -n --arg text "$text" '[{type: "text", text: $text}]')
-
-  while IFS= read -r hunk; do
-    [ -n "$hunk" ] || continue
-
-    start=
-    end=
-    file_path="$hunk"
-    if [[ "$hunk" =~ ^(.+):([0-9]+)-([0-9]+)$ ]]; then
-      file_path="${BASH_REMATCH[1]}"
-      start="${BASH_REMATCH[2]}"
-      end="${BASH_REMATCH[3]}"
-    fi
-
-    abs_path=$(realpath -m "$REPO_DIR/$file_path")
-    display_name="$hunk"
-
-    if [ -n "$start" ] && [ -n "$end" ]; then
-      file_url=$(jq -rn --arg path "$abs_path" --arg start "$start" --arg end "$end" '"file://" + ($path | split("/") | map(@uri) | join("/")) + "?start=" + $start + "&end=" + $end')
-    else
-      file_url=$(jq -rn --arg path "$abs_path" '"file://" + ($path | split("/") | map(@uri) | join("/"))')
-    fi
-
-    part=$(jq -n \
-      --arg url "$file_url" \
-      --arg filename "$display_name" \
-      '{type: "file", mime: "text/plain", url: $url, filename: $filename}')
-    parts=$(jq -n --argjson parts "$parts" --argjson part "$part" '$parts + [$part]')
-  done < <(jj opencode-files)
-
-  jq -n --argjson parts "$parts" '{parts: $parts}'
-}
-
-jj opencode-prepare ${1:-@}
-content=$(jj opencode-prompt)
-submit_msg=$(jj opencode-submit-description)
-
-session_id=$(printf '{}' | post session | jq -e -r '.id')
-if [ -z "$session_id" ] || [ "$session_id" = "null" ]; then
-  echo "Failed to create opencode session" 1>&2
+if [ -z "$session_id" ]; then
+  echo "nobs-prepare failed to resolve a session" 1>&2
   exit 1
 fi
 
-build_prompt_async_payload | post_quiet "session/$session_id/prompt_async"
+if [ "$status" = "resumed" ]; then
+  # Continue the existing session in the TUI; no message to send.
+  nobs --session "$session_id"
+  exit $?
+fi
 
-submit_msg=$(echo "$submit_msg" | sed "s/^:: /:$session_id: /")
-
-jj describe -m "$submit_msg" > /dev/null 2>&1
-printf '%s\n' "$session_id"
+# New session: launch the TUI with the prompt (or TODOs) as the first message.
+args=(--session "$session_id")
+if [ -n "$prompt" ]; then
+  args+=(-p "$prompt")
+fi
+for file in "${files[@]}"; do
+  args+=(--file "$file")
+done
+nobs "${args[@]}"
 """, ""]
 
-opencode = ["opencode-send"]
-oc = ["opencode"]
+nobs-run = ["util", "exec", "--", "bash", "-c", """
+#!/usr/bin/env bash
+set -euo pipefail
+
+prepared=()
+while IFS= read -r -d '' field; do
+  prepared+=("$field")
+done < <(jj nobs-prepare "${1:-@}")
+
+session_id=${prepared[0]:-}
+prompt=${prepared[2]:-}
+files=("${prepared[@]:3}")
+
+if [ -z "$session_id" ]; then
+  echo "nobs-prepare failed to resolve a session" 1>&2
+  exit 1
+fi
+
+# One-shot: submit the prompt and exit when done (yields back to callers).
+args=(--run --session "$session_id")
+if [ -n "$prompt" ]; then
+  args+=(-p "$prompt")
+fi
+for file in "${files[@]}"; do
+  args+=(--file "$file")
+done
+nobs "${args[@]}"
+""", ""]
 
 # https://isaaccorbrey.com/notes/jujutsu-megamerges-for-fun-and-profit#tldr
 stack = ["rebase", "--after", "trunk()", "--before", "closest_merge(@)", "--revision"]
@@ -286,141 +283,151 @@ else
 fi
 """]
 
-opencode-send-attach = ["util", "exec", "--", "bash", "-c", """
-#!/usr/bin/env bash
-set -euo pipefail
+agent-jobs = ["log", "--no-graph", "--reversed", "--template", 'change_id ++ "\n"', "-r", "agent_job()"]
 
-REPO_DIR=$(jj root)
+newhunks = ["util", "exec", "--", "uv", "run", "--no-project", "--quiet", "python3", "-c", '''
+"""Merge the changed-line segments of a diff into contiguous blocks.
 
-rev="${1:-@}"
+Reads `jj diff --git -r REV` and prints one line per block in
+`path:START-END` form (or a bare `path` when the whole file should be
+attached). Replaces the old awk one-segment-per-hunk behavior, which could
+attach 20+ windows of the same file.
 
-# If not already a valid prompt, set it to one and exit
-description=$(jj log --no-graph -r "$rev" --template 'description' 2>/dev/null || echo "")
-if [ -n "$description" ]; then
-  clean=$(echo "$description" | sed -E 's/^:[a-zA-Z0-9_]+: //; s/^:: //; s/^: //')
-  if [ "$description" != ": $clean" ]; then
-    jj describe "$rev" -m ": $clean" > /dev/null 2>&1
-    exit 0
-  fi
-fi
+Tunables (env vars):
+  JJ_HUNKS_CONTEXT  padding added around each hunk before merging (default 4)
+  JJ_HUNKS_GAP      blocks closer than this many lines are merged (default 20)
+  JJ_HUNKS_WHOLE    fraction of the file covered above which the whole file
+                    is attached instead of individual blocks (default 0.8)
+"""
+import os
+import re
+import subprocess
+import sys
 
-# Check if there's a description or TODOs
-if ! prompt=$(jj opencode-prompt "$rev" 2>/dev/null); then
-  jj edit "$rev"
-  parent_description=$(jj log --no-graph -r "$rev-" --template 'description' 2>/dev/null || echo "")
-  session_id=$(echo "$parent_description" | sed -nE 's/^:([a-zA-Z0-9_]+): .*/\\1/p' | head -1)
-  if [ -n "$session_id" ]; then
-    opencode "$REPO_DIR" --session "$session_id"
-  else
-    opencode "$REPO_DIR"
-  fi
-  exit $?
-else
-  PORT=$(( (RANDOM % 30000) + 30000 ))
+HUNK_RE = re.compile(r'^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@')
+DIFF_RE = re.compile(r'^diff --git ')
 
-  # Background: wait for TUI's server to be ready, then send the prompt
-  (
-    ready=0
-    for i in $(seq 1 50); do
-      if curl -sS --connect-timeout 0.2 --max-time 0.5 "http://127.0.0.1:$PORT/session" >/dev/null 2>&1; then
-        ready=1
+
+def file_total_lines(rev: str, path: str) -> int | None:
+    """Line count of `path` on the diff's new side.
+
+    `jj diff -r RANGE` compares a range against its head, so resolve the
+    head with `latest(REV)` (a range may not be given to `jj file show`);
+    fall back to plain REV and to the old `jj cat` spelling.
+    """
+    for target in (f'latest({rev})', rev):
+        for cmd in (
+            ['jj', 'file', 'show', '-r', target, '--', path],
+            ['jj', 'cat', '-r', target, '--', path],
+        ):
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, check=False
+            )
+            if result.returncode == 0:
+                break
+        else:
+            continue
         break
-      fi
-      sleep 0.1
-    done
-    if [ "$ready" -ne 1 ]; then
-      exit 1
-    fi
-    set +e
-    session_id=$(OPENCODE_PORT=$PORT jj opencode-send "${1:-@}")
-    send_exit=$?
-    set -e
-    if [ "$send_exit" -eq 0 ] && [ -n "$session_id" ]; then
-      DIRECTORY_QUERY=$(jq -rn --arg dir "$REPO_DIR" '$dir | @uri')
-      curl -sS -X POST \
-        -H "Content-Type: application/json" \
-        -d "$(jq -n --arg id "$session_id" '{sessionID: $id}')" \
-        "http://127.0.0.1:$PORT/tui/select-session?directory=$DIRECTORY_QUERY" >/dev/null 2>&1
-    fi
-  ) &
+    else:
+        return None
+    if not result.stdout:
+        return 0
+    # Count lines whether or not the file ends with a newline.
+    return result.stdout.count('\n') + (
+        0 if result.stdout.endswith('\n') else 1
+    )
 
-  # Start TUI - its server will receive the requests from the background subshell
-  opencode "$REPO_DIR" --port "$PORT"
-fi
-""", ""]
 
-opencode-jobs = ["log", "--no-graph", "--reversed", "--template", 'change_id ++ "\n"', "-r", "opencode_job()"]
+def main() -> None:
+    rev = sys.argv[1] if len(sys.argv) > 1 else '@'
+    context = int(os.environ.get('JJ_HUNKS_CONTEXT', '4'))
+    gap = int(os.environ.get('JJ_HUNKS_GAP', '20'))
+    whole = float(os.environ.get('JJ_HUNKS_WHOLE', '0.8'))
 
-newhunks = ["util", "exec", "--", "bash", "-c", """
-jj diff -r "${1:-@}" --git | awk '
-  /^diff --git/ {
-    current_file = $4
-    gsub(/^b\\//, "", current_file)
-  }
-  /^@@/ {
-    if (match($0, /@@ -0,0 \\+([0-9]+)(,([0-9]+))? @@/, arr)) {
-      print current_file
-    } else if (match($0, /@@ -([0-9]+)(,([0-9]+))? \\+([0-9]+)(,([0-9]+))? @@/, arr)) {
-      new_start = arr[4]
-      new_count = (arr[6] != "") ? arr[6] : 1
-      new_end = new_start + new_count - 1
-      print current_file ":" new_start "-" new_end
-    }
-  }'
-""", ""]
+    diff = subprocess.run(
+        ['jj', 'diff', '--git', '-r', rev],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
 
-opencode-run-all = ["util", "exec", "--", "bash", "-c", """
+    # path -> (is_new_file, [new-side (start, end) hunks])
+    files: dict[str, tuple[bool, list[tuple[int, int]]]] = {}
+    order: list[str] = []
+    path = None
+    for line in diff.splitlines():
+        if DIFF_RE.match(line) and ' b/' in line:
+            path = line.rsplit(' b/', 1)[1]
+            files.setdefault(path, (False, []))
+            order.append(path)
+        elif path is not None and line.startswith('@@'):
+            m = HUNK_RE.match(line)
+            if not m:
+                continue
+            is_new = m.group(1) == '0' and (m.group(2) or '1') == '0'
+            new_start = int(m.group(3))
+            new_count = int(m.group(4) or '1')
+            _, hunks = files[path]
+            if new_count == 0:
+                continue  # deletion-only hunk: nothing on the new side to attach
+            if is_new:
+                files[path] = (True, hunks)  # whole file is new
+                continue
+            hunks.append((new_start, new_start + new_count - 1))
+
+    out = []
+    for path in order:
+        is_new, hunks = files[path]
+        if is_new:
+            out.append(path)  # attachments without ranges mean 'whole file'
+            continue
+        if not hunks:
+            continue
+        total = file_total_lines(rev, path)
+        if total:
+            padded = [(max(1, s - context), min(total, e + context)) for s, e in hunks]
+        else:
+            padded = [(s - context, e + context) for s, e in hunks]
+        padded.sort()
+        merged = []
+        for s, e in padded:
+            if merged and s <= merged[-1][1] + gap:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], e))
+            else:
+                merged.append((s, e))
+        if total:
+            covered = sum(e - s + 1 for s, e in merged)
+            if covered / total >= whole:
+                out.append(path)
+                continue
+        out.extend(f'{path}:{s}-{e}' for s, e in merged)
+    print('\n'.join(out))
+
+
+if __name__ == '__main__':
+    main()
+''']
+
+nobs-run-all = ["util", "exec", "--", "bash", "-c", """
 #!/usr/bin/env bash
 set -euo pipefail
 
 while true; do
-  target_change=$(jj opencode-jobs | head -n 1)
+  target_change=$(jj agent-jobs | head -n 1)
   if [ -z "$target_change" ]; then
-    echo "No more opencode jobs remaining" 1>&2
+    echo "No more nobs jobs remaining" 1>&2
     break
   fi
-  echo "Running opencode-run on: $target_change"
-  jj opencode-run "$target_change"
+  echo "Running nobs-run on: $target_change"
+  jj nobs-run "$target_change"
 done
-""", ""]
-
-append-files = ["util", "exec", "--", "bash", "-c", """
-#!/usr/bin/env bash
-set -euo pipefail
-
-# Get current description for the specified revision or default to @
-current_desc=$(jj log --no-graph -r ${1:-@} --template 'description' 2>/dev/null || echo "")
-
-# Use fzf to select files directly
-selected_files=$(fzf --multi --prompt='Select files to append to the description: ')
-
-if [ -z "$selected_files" ]; then
-  echo "No files selected" 1>&2
-  exit 1
-fi
-
-# Convert selected files to a space-separated list with @ prefix
-files_list=$(echo "$selected_files" | sed 's/^/@/' | tr '\n' ' ' | sed 's/ $//')
-
-# Create new description
-if [ -n "$current_desc" ]; then
-  # Trim whitespace from current description
-  trimmed_desc=$(echo "$current_desc" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-  new_desc="$trimmed_desc $files_list"
-else
-  new_desc="$files_list"
-fi
-
-# Update the description
-jj describe -r ${1:-@} -m "$new_desc"
-echo "Appended files to description: $files_list"
 """, ""]
 
 find-todos = ["util", "exec", "--", "bash", "-c", """
 #!/usr/bin/env bash
 set -euo pipefail
 
-jj diff --git -r "${1:-@}" --context 0 | awk '/^\\+.*/ && (/TODO/ || /FIXME/) {print}'
+jj diff --git -r "${1:-@}" --context 0 | awk '/^\\+/ && !/^\\+\\+\\+ / && (/TODO/ || /FIXME/) {print}'
 """, ""]
 
 edit-with-lines = ["util", "exec", "--", "bash", "-c", """
@@ -448,6 +455,6 @@ ${EDITOR:-vim} $editor_args
 """, ""]
 
 [revset-aliases]
-'opencode_job()' = 'mutable() & (empty() ~ ::(~empty())) & description(regex:"^: ")'
-'opencode_job_trail()' = 'latest(::@- & ~description(regex:"^(:: |:[a-zA-Z0-9_]+: )"))::@'
+'agent_job()' = 'mutable() & (empty() ~ ::(~empty())) & description(regex:"^: ")'
+'agent_job_trail()' = 'latest(::@- & ~description(regex:"^(:: |:[a-zA-Z0-9_-]+: )"))::@'
 "closest_merge(to)" = "heads(::to & merges())" # https://isaaccorbrey.com/notes/jujutsu-megamerges-for-fun-and-profit#tldr

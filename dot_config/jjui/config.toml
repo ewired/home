@@ -52,7 +52,7 @@ scope = "revisions"
 desc = "new note commit after"
 
 [[actions]]
-name = "opencode-send-attach"
+name = "nobs"
 lua = '''
 local change_id = context.change_id()
 if not change_id then
@@ -61,95 +61,58 @@ if not change_id then
 end
 
 local description, err = jj("log", "--no-graph", "-r", change_id, "--template", "description")
-if not description or err then
-  exec_shell("jj opencode-send-attach " .. change_id)
-else
-  if string.match(description, "^: .+") then
-    exec_shell("jj opencode-send-attach " .. change_id)
-  else
-    jj_interactive("opencode-send-attach", change_id)
+if description and description ~= "" and not err then
+  -- Session markers that jj may prefix a description with: `:ID: ` (ids are
+  -- uuids, so dashes are allowed -- see the [a-zA-Z0-9_-]+ grammars in
+  -- ~/.config/jj/config.toml) and the `:: ` no-id placeholder.
+  local function strip_id_markers(desc)
+    while true do
+      local stripped = (desc:gsub("^:: ", ""):gsub("^:[a-zA-Z0-9_-]+: ", ""))
+      if stripped == desc then return desc end
+      desc = stripped
+    end
+  end
+
+  -- A description is already a prompt-description when it starts with the
+  -- prompt marker ": " and no jj marker follows it; anything else -- including
+  -- ": :ID: text" leftovers from the pre-dash pattern -- is rewritten instead
+  -- of launching nobs. Prefix checks only (never `.`/`$` patterns), so
+  -- multi-line descriptions are handled the same as single-line ones.
+  local function is_prompt_description(desc)
+    return desc:sub(1, 2) == ": " and strip_id_markers(desc:sub(3)) == desc:sub(3)
+  end
+
+  if not is_prompt_description(description) then
+    local body = (description:gsub("^: ", ""))
+    jj("describe", "-r", change_id, "-m", ": " .. strip_id_markers(body))
+    revisions.refresh()
+    return
   end
 end
+
+-- Description is empty or already a prompt-description: launch nobs
+exec_shell("jj nobs " .. change_id)
 revisions.refresh()
 '''
 
 [[bindings]]
-action = "opencode-send-attach"
+action = "nobs"
 key = "O"
 scope = "revisions"
-desc = "opencode send and attach"
+desc = "run nobs on selected change"
 
 [[actions]]
-name = "append-files-to-desc"
+name = "nobs-run-all"
 lua = '''
-local change_id = context.change_id()
-if not change_id then
-  flash({ text = "No change selected", error = true })
-  return
-end
-jj_interactive("append-files", change_id)
+exec_shell("jj nobs-run-all")
 revisions.refresh()
 '''
 
 [[bindings]]
-action = "append-files-to-desc"
-key = "ctrl+f"
-scope = "revisions"
-desc = "append files to desc"
-
-[[actions]]
-name = "append-file-to-working-desc"
-lua = '''
-local file = context.file()
-if not file then
-  flash({ text = "No file selected", error = true })
-  return
-end
-
--- Get current description for working revision
-local current_desc, err = jj("log", "--no-graph", "-r", "@", "--template", "description")
-if err then
-  flash({ text = err, error = true })
-  return
-end
-
--- Create new description with @ prefix for the file
-local new_desc
-if current_desc and current_desc ~= "" then
-  new_desc = current_desc:gsub("^%s*", ""):gsub("%s*$", "") .. " @" .. file
-else
-  new_desc = "@" .. file
-end
-
--- Update the description of working revision
-local _, describe_err = jj("describe", "-r", "@", "-m", new_desc)
-if describe_err then
-  flash({ text = describe_err, error = true })
-  return
-end
-
-flash("Appended @" .. file .. " to @ description")
-revisions.refresh()
-'''
-
-[[bindings]]
-action = "append-file-to-working-desc"
-key = "ctrl+f"
-scope = "revisions.details"
-desc = "append file to @ desc"
-
-[[actions]]
-name = "opencode-run-all"
-lua = '''
-jj_interactive("opencode-run-all")
-revisions.refresh()
-'''
-
-[[bindings]]
-action = "opencode-run-all"
+action = "nobs-run-all"
 key = "ctrl+o"
 scope = "revisions"
-desc = "opencode run all jobs"
+desc = "nobs run all jobs"
 
 [[actions]]
 name = "diff-to-working"

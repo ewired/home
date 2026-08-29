@@ -1,0 +1,7 @@
+name = "NVIDIA NIM"
+selector = "nim"
+api_base = "https://integrate.api.nvidia.com/v1"
+metadata_mode = "api"
+
+[auth]
+env = "NVIDIA_NIM_API_KEY"

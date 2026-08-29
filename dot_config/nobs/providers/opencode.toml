@@ -1,0 +1,7 @@
+name = "opencode go"
+selector = "opencode-go"
+api_base = "https://opencode.ai/zen/go/v1"
+metadata_mode = "api"
+
+[auth]
+env = "OPENCODE_API_KEY"
