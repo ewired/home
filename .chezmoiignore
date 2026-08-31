@@ -1,9 +1,6 @@
 **/node_modules
 **/.git
 **/.jj
-.config/opencode/.gitignore
-.config/opencode/bun.lock
-.config/opencode/opencode.private.json
 .config/helix/languages.private.json
 .nix-config/private.nix
 .nix-config/hardware-configuration.nix

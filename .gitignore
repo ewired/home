@@ -1,5 +1,3 @@
-dot_config/opencode/opencode.private.json
 dot_config/helix/languages.private.json
-dot_config/opencode/opencode.private.json
 dot_nix-config/private.nix
 dot_nix-config/hardware-configuration.nix
