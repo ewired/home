@@ -66,11 +66,11 @@ rev=${1:-@}
 description=$(jj log --no-graph -r "$rev" --template 'description')
 prompt_text=""
 
-if [ "$rev" = "@" ]; then
-  trail_revset='agent_job_trail()'
-else
-  trail_revset=$(printf 'latest(::%s- & ~description(regex:"^(:: |:[a-zA-Z0-9_-]+: )"))::%s' "$rev" "$rev")
-fi
+# The trail is anchored at the working copy: nobs-prepare checks out the
+# target change (`jj edit "$rev"`) before calling this alias, so @ == rev and
+# agent_job_trail() (defined against @) is exactly equivalent to the
+# previous `latest(::<rev>- & ~description(...))::<rev>` expansion.
+trail_revset='agent_job_trail()'
 
 if [ -n "$description" ]; then
   clean_description=$(echo "$description" | sed -E 's/^:[a-zA-Z0-9_-]+: *//; s/^:: //; s/^: //')
@@ -111,9 +111,9 @@ if [ -s "$tmpfile" ]; then
     printf '# To inspect a specific file, pass it as a positional argument:\n#\n'
     printf '#   jj diff --git -r %s%s%s <path>\n#\n' "'" "$trail_revset" "'"
     printf '# Multiple paths are accepted, and paths are relative to the repo root.\n#\n'
-    printf '# The revset `%s` selects the range of changes from the most\n' "$trail_revset"
-    printf '# recent non-instruction ancestor of %s (inclusive) up to %s (inclusive),\n' "${1:-@}" "${1:-@}"
-    printf '# i.e. the work already done for the current task.\n\n'
+    printf '# The revset `%s` selects the work already done for the current task:\n' "$trail_revset"
+    printf '# the range from the most recent non-instruction ancestor (inclusive)\n'
+    printf '# up to the working copy (inclusive).\n\n'
   fi
   cat "$tmpfile"
   conflicts=$(jj resolve -l 2>/dev/null || true)
