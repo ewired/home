@@ -379,7 +379,6 @@
        libadwaita
      ];
    };
-  services.tailscale.enable = true;
   services.usbmuxd.enable = true;
   virtualisation.podman.enable = true;
 
