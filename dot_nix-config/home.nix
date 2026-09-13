@@ -13,6 +13,7 @@
 }: {
   imports = [
     voxtype.homeManagerModules.default
+    ./modules/battery-prompt.nix
   ];
 
   home.username = username;
@@ -91,6 +92,8 @@
     };
 
   };
+
+  services.batteryPrompt.enable = true;
 
   programs.voxtype = {
     enable = true;
