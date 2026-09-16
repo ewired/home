@@ -10,11 +10,13 @@
   sambaShares,
   helix-local,
   vmSshKey,
+  appleTvRemoteMac,
   ...
 }:
 {
   imports = [
     ./hardware-configuration.nix
+    inputs.apple-tv-remote.nixosModules.default
   ];
   nix.settings.experimental-features = [
     "nix-command"
@@ -36,6 +38,7 @@
     "d /var/lib/nix-flakes 0755 root root -"
     "L+ /var/lib/nix-flakes/cinny - - - - /home/${username}/Documents/cinny"
     "L+ /var/lib/nix-flakes/helix - - - - /home/${username}/Documents/helix"
+    "L+ /var/lib/nix-flakes/orchrd - - - - /home/${username}/Documents/orchrd"
   ];
   nix.settings.trusted-users = [
     username
@@ -188,6 +191,14 @@
       UserspaceHID = true;
     };
   };
+  # Gen-1 Siri Remote (A1962). Pair once with bluetoothctl (Menu + Volume Up).
+  # The mic needs CAP_NET_RAW/NET_ADMIN for the raw HCI monitor, so both
+  # services run as system services scoped to this user.
+  services.apple-tv-remote = {
+    enable = true;
+    user = username;
+    macAddress = appleTvRemoteMac;
+  };
   hardware.xone.enable = true;
   programs.steam = {
     enable = true;
@@ -264,6 +275,7 @@
 
   users.users.${username} = {
     isNormalUser = true;
+    uid = 1000; # apple-tv-remote derives /run/user/<uid> from it
     inherit description;
     extraGroups = [
       "networkmanager"

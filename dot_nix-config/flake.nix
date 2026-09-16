@@ -18,8 +18,8 @@
     # cache.nixos.org.
     nix.url = "github:NixOS/nix/2.35.1";
     # Local flakes via username-free symlinks (see systemd.tmpfiles.rules in
-    # configuration.nix): /var/lib/nix-flakes/{helix,cinny} -> real repos.
-    # git+file follows the symlink; the committed URL has no username.
+    # configuration.nix): /var/lib/nix-flakes/{helix,cinny,orchrd} -> real
+    # repos. git+file follows the symlink; the committed URL has no username.
     cinny-local.url = "git+file:/var/lib/nix-flakes/cinny";
     helix-local = {
       url = "git+file:/var/lib/nix-flakes/helix";
@@ -47,6 +47,12 @@
     };
     nix-index-database = {
       url = "github:nix-community/nix-index-database";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    # Local fork of upstream's flake; `dir` selects the sub-flake over the
+    # orchrd root. follows: the sub-flake pins 26.05, our tree is 25.11.
+    apple-tv-remote = {
+      url = "git+file:/var/lib/nix-flakes/orchrd?dir=apple_tv_remote";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
@@ -111,7 +117,7 @@
             system = "x86_64-linux";
             config.allowUnfree = true;
           };
-          inherit (private) username description audioNodes nebulaServices sambaShares vmSshKey;
+          inherit (private) username description audioNodes nebulaServices sambaShares vmSshKey appleTvRemoteMac;
           helix-local = inputs.helix-local;
           voxtype = inputs.voxtype;
         };
