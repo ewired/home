@@ -67,6 +67,11 @@
     ];
   };
   networking.firewall.trustedInterfaces = [ "tun0" ];
+  services.avahi = {
+    enable = true;
+    nssmdns4 = true;
+    openFirewall = true;
+  };
   time.timeZone = null;
   services.timesyncd.enable = true;
   i18n.defaultLocale = "en_US.UTF-8";
