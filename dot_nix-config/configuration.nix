@@ -20,6 +20,11 @@
     "nix-command"
     "flakes"
   ];
+  nix.settings.max-jobs = 8;
+  nix.settings.cores = 8;
+  nix.settings.auto-optimise-store = true;
+  nix.channel.enable = false;
+  nix.registry.nixpkgs.flake = inputs.nixpkgs;
   # Pinned Nix 2.35.1 via the `nix` flake input.
   nix.package = inputs.nix.packages.${pkgs.stdenv.hostPlatform.system}.nix;
   # Username-free symlink targets for the local flake inputs in flake.nix
@@ -36,12 +41,16 @@
     username
     "root"
   ];
-  nix.gc = {
-    automatic = true;
-    dates = "weekly";
-    options = "--delete-older-than 14d";
-    randomizedDelaySec = "45min";
+  programs.nh = {
+    enable = true;
+    flake = "/home/${username}/.nix-config#nixos";
+    clean = {
+      enable = true;
+      dates = "weekly";
+      extraArgs = "--keep-since 7d --keep 3 --keep-one";
+    };
   };
+  systemd.timers.nh-clean.timerConfig.RandomizedDelaySec = "45min";
   boot.initrd.systemd.enable = true;
   boot.plymouth.enable = true;
   boot.loader.systemd-boot.enable = true;
