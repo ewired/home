@@ -47,7 +47,10 @@
   boot.loader.systemd-boot.enable = true;
   boot.loader.systemd-boot.configurationLimit = 10;
   boot.loader.efi.canTouchEfiVariables = true;
-  boot.kernelParams = [ "quiet" ];
+  boot.kernelParams = [
+    "quiet"
+    "zswap.enabled=0"
+  ];
   boot.extraModprobeConfig = ''
     options bluetooth disable_ertm=1
     blacklist xpad
@@ -130,6 +133,15 @@
     enable = true;
     enableNotifications = true;
   };
+
+  zramSwap = {
+    enable = true;
+    algorithm = "zstd";
+    memoryPercent = 50;
+    priority = 100;
+  };
+  services.zram-generator.settings."zram0".zram-resident-limit = "min(ram / 2, 16384)";
+  boot.kernel.sysctl."vm.swappiness" = 150;
 
   # Cap IO to ~80% of measured sequential throughput (~932 MB/s) on nvme0n1
   # to prevent rogue processes from saturating disk IO
