@@ -21,7 +21,7 @@
     "flakes"
   ];
   # Pinned Nix 2.35.1 via the `nix` flake input.
-  nix.package = inputs.nix.packages.${pkgs.system}.nix;
+  nix.package = inputs.nix.packages.${pkgs.stdenv.hostPlatform.system}.nix;
   # Username-free symlink targets for the local flake inputs in flake.nix
   # (git+file:/var/lib/nix-flakes/*). Real paths are derived from `username`
   # (from private.nix), so the committed config never contains the username.
@@ -267,13 +267,13 @@
   programs.firefox.enable = true;
   nixpkgs.config.allowUnfree = true;
   environment.systemPackages = with pkgs; [
-    helix-local.packages.${pkgs.system}.default
+    helix-local.packages.${pkgs.stdenv.hostPlatform.system}.default
     # helix
     nil
     chezmoi
     cloud-utils
     inputs.zen-browser.packages.${pkgs.stdenv.hostPlatform.system}.default
-    inputs.nix-index-database.packages.${pkgs.system}.comma-with-db
+    inputs.nix-index-database.packages.${pkgs.stdenv.hostPlatform.system}.comma-with-db
     wl-clipboard
     gnomeExtensions.caffeine
     gnomeExtensions.bing-wallpaper-changer
