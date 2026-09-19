@@ -415,32 +415,8 @@
     '';
   };
 
-  # Auto-upgrade configuration with metered network detection
-  system.autoUpgrade = {
-    enable = true;
-    flake = "/home/${username}/.nix-config#nixos";
-    dates = "02:00";
-    randomizedDelaySec = "45min";
-    allowReboot = false;
-    flags = [
-      "--update-input"
-      "nixpkgs"
-    ];
-  };
-
   systemd.services = pkgs.lib.mkMerge [
     nebulaServices
-    {
-      nixos-upgrade = {
-        path = [ pkgs.networkmanager ];
-        serviceConfig = {
-          ExecCondition = ''
-            ${pkgs.bash}/bin/bash -c \
-            '[[ $(${pkgs.networkmanager}/bin/nmcli -t -f GENERAL.METERED dev show | grep -v "unknown" | head -n1) == "GENERAL.METERED:no" ]]'
-          '';
-        };
-      };
-    }
     {
       # Download the Fedora 44 cloud image, build the cloud-init seed, and
       # create/start the libvirt domain. A no-op once `fedora` exists. RAM is
