@@ -108,6 +108,7 @@
     enable = true;
     wayland = true;
   };
+  services.logind.settings.Login.HandleLidSwitch = "ignore";
   services.xserver = {
     enable = true;
 
