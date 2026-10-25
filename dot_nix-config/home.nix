@@ -13,6 +13,7 @@
 }: {
   imports = [
     voxtype.homeManagerModules.default
+    ./modules/snapcast.nix
     ./modules/battery-prompt.nix
   ];
 
@@ -115,6 +116,38 @@
 
   systemd.user.services.voxtype = {
     Install.WantedBy = lib.mkForce [ ];
+  };
+
+  # Snapcast server for Snapdroid/Snaplix on the phone; fed by the pipe sink
+  # in modules/snapcast-pipewire.nix. Opus is 48 kHz only, so sink and stream
+  # both run at 48000:16:2.
+  services.snapcast = {
+    enable = true;
+    settings = {
+      stream = {
+        sampleformat = "48000:16:2";
+        # Above what the OpenRun's SBC link resolves; halves the wire bytes.
+        codec = "opus:BITRATE:96000";
+        source = "pipe:///dev/shm/snapcast?name=Unified Sink";
+        # Absorbs LTE jitter; also caps Client.SetLatency.
+        buffer = 1500;
+        chunk_ms = 100;
+      };
+      "tcp-streaming" = {
+        enabled = true;
+        bind_to_address = "0.0.0.0";
+      };
+      "tcp-control" = {
+        enabled = true;
+        bind_to_address = "0.0.0.0";
+      };
+      http = {
+        enabled = true;
+        bind_to_address = "0.0.0.0";
+        # INI values must be strings; snapweb serves the control UI.
+        doc_root = "${pkgs.snapweb}";
+      };
+    };
   };
 
   xdg.desktopEntries.foot-herdr = {

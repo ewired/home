@@ -16,6 +16,7 @@
 {
   imports = [
     ./hardware-configuration.nix
+    ./modules/snapcast-pipewire.nix
     inputs.apple-tv-remote.nixosModules.default
   ];
   nix.settings.experimental-features = [
@@ -266,12 +267,28 @@
                   };
                 };
               }
+              {
+                # Requires snapserver to drain the FIFO, or the stream
+                # awaits space and stutters.
+                matches = [{
+                  "media.class" = "Audio/Sink";
+                  "node.name" = "Snapcast";
+                }];
+                actions = {
+                  "create-stream" = {
+                    "combine.audio.position" = [ "FL" "FR" ];
+                    "audio.position" = [ "FL" "FR" ];
+                  };
+                };
+              }
             ];
           };
         }
       ];
     };
   };
+
+  services.snapcast-pipewire.enable = true;
 
   users.users.${username} = {
     isNormalUser = true;
