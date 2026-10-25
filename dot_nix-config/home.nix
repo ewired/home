@@ -189,29 +189,8 @@
       };
       cargoHash = "sha256-ER1oW/y8IVFqJ+UxBpE1f6OiZUDbt05kbwxMD4fc6jM=";
     })
-    (pkgs.buildGoModule {
-      pname = "wrapguard";
-      version = "1.3.2";
-      src = pkgs.fetchFromGitHub {
-        owner = "puzed";
-        repo = "wrapguard";
-        rev = "v1.3.2";
-        hash = "sha256-B2JHvxggHaj+MuR39p0a5BIuLt66+gbpBnF87mhbssU=";
-      };
-      vendorHash = "sha256-eS4D494IFFNVvp9Do2e1zCU1DWAInigyK8EakfLqO6U=";
-      doCheck = false;
-      nativeBuildInputs = [ pkgs.gcc ];
-      postInstall = ''
-        $CC -shared -fPIC -Wall -Wpedantic -O2 lib/intercept.c -ldl \
-          -o "$out/bin/libwrapguard.so"
-      '';
-      meta = with pkgs.lib; {
-        description = "Userspace WireGuard proxy for transparent network tunneling";
-        homepage = "https://github.com/puzed/wrapguard";
-        license = licenses.mit;
-        mainProgram = "wrapguard";
-      };
-    })
+    # Carries a local patch for WireGuard profiles with multiple interface addresses.
+    (pkgs.callPackage ./pkgs/wrapguard { })
   ];
 
   # TODO: use a nix input for hashcards

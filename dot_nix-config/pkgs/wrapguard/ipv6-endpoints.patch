@@ -1,0 +1,158 @@
+Support comma-separated interface addresses, and connect the interceptor's
+SOCKS5 socket with the address family matching the socket domain.
+
+diff --git a/config.go b/config.go
+index 2c72d0e..fe9ac64 100644
+--- a/config.go
++++ b/config.go
+@@ -190,9 +190,12 @@ func validateConfig(config *WireGuardConfig) error {
+ 		return fmt.Errorf("interface address is required")
+ 	}
+ 
+-	// Validate address format
+-	if _, err := netip.ParsePrefix(config.Interface.Address); err != nil {
+-		return fmt.Errorf("invalid interface address format: %w", err)
++	// Validate address format (supports comma-separated addresses)
++	for _, addr := range strings.Split(config.Interface.Address, ",") {
++		addr = strings.TrimSpace(addr)
++		if _, err := netip.ParsePrefix(addr); err != nil {
++			return fmt.Errorf("invalid interface address format: %w", err)
++		}
+ 	}
+ 
+ 	// Validate at least one peer
+@@ -221,18 +224,39 @@ func validateConfig(config *WireGuardConfig) error {
+ 	return nil
+ }
+ 
+-// GetInterfaceIP extracts the IP address from the interface address (without CIDR)
++// GetInterfaceIPs extracts all IP addresses from the interface address (supports comma-separated)
++func (c *WireGuardConfig) GetInterfaceIPs() ([]netip.Addr, error) {
++	var addrs []netip.Addr
++	for _, addr := range strings.Split(c.Interface.Address, ",") {
++		addr = strings.TrimSpace(addr)
++		prefix, err := netip.ParsePrefix(addr)
++		if err != nil {
++			return nil, err
++		}
++		addrs = append(addrs, prefix.Addr())
++	}
++	return addrs, nil
++}
++
++// GetInterfaceIP extracts the first IP address from the interface address
+ func (c *WireGuardConfig) GetInterfaceIP() (netip.Addr, error) {
+-	prefix, err := netip.ParsePrefix(c.Interface.Address)
++	addrs, err := c.GetInterfaceIPs()
+ 	if err != nil {
+ 		return netip.Addr{}, err
+ 	}
+-	return prefix.Addr(), nil
++	return addrs[0], nil
+ }
+ 
+-// GetInterfacePrefix returns the interface address as a prefix
++// GetInterfacePrefix returns the first interface address as a prefix
+ func (c *WireGuardConfig) GetInterfacePrefix() (netip.Prefix, error) {
+-	return netip.ParsePrefix(c.Interface.Address)
++	for _, addr := range strings.Split(c.Interface.Address, ",") {
++		addr = strings.TrimSpace(addr)
++		prefix, err := netip.ParsePrefix(addr)
++		if err == nil {
++			return prefix, nil
++		}
++	}
++	return netip.Prefix{}, fmt.Errorf("no valid prefix found in %s", c.Interface.Address)
+ }
+ 
+ // base64ToHex converts a base64-encoded WireGuard key to lowercase hex format
+diff --git a/lib/intercept.c b/lib/intercept.c
+index 57da97e..1f84ea3 100644
+--- a/lib/intercept.c
++++ b/lib/intercept.c
+@@ -949,16 +949,41 @@ static int socks5_connect(int sockfd, const struct sockaddr *addr, socklen_t add
+         return -1;
+     }
+ 
+-    struct sockaddr_in socks_addr;
+-    memset(&socks_addr, 0, sizeof(socks_addr));
+-    socks_addr.sin_family = AF_INET;
+-    socks_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+-    socks_addr.sin_port = htons(socks_port);
+-    
+-    if (debug_enabled()) {
+-        log_debugf("Connecting to SOCKS5 proxy at 127.0.0.1:%d", socks_port);
++    // Detect socket domain to use the right address format
++    int sock_domain = 0;
++    socklen_t domain_len = sizeof(sock_domain);
++    getsockopt(sockfd, SOL_SOCKET, SO_DOMAIN, &sock_domain, &domain_len);
++
++    struct sockaddr_storage socks_ss;
++    memset(&socks_ss, 0, sizeof(socks_ss));
++
++    if (sock_domain == AF_INET6) {
++        // Use IPv4-mapped IPv6 address for IPv6 sockets
++        struct sockaddr_in6 *socks6 = (struct sockaddr_in6 *)&socks_ss;
++        socks6->sin6_family = AF_INET6;
++        memset(&socks6->sin6_addr, 0, 16);
++        socks6->sin6_addr.s6_addr[10] = 0xff;
++        socks6->sin6_addr.s6_addr[11] = 0xff;
++        socks6->sin6_addr.s6_addr[12] = 127;
++        socks6->sin6_addr.s6_addr[13] = 0;
++        socks6->sin6_addr.s6_addr[14] = 0;
++        socks6->sin6_addr.s6_addr[15] = 1;
++        socks6->sin6_port = htons(socks_port);
++        if (debug_enabled()) {
++            log_debugf("Connecting to SOCKS5 proxy at ::ffff:127.0.0.1:%d (IPv6 socket)", socks_port);
++        }
++    } else {
++        struct sockaddr_in *socks4 = (struct sockaddr_in *)&socks_ss;
++        socks4->sin_family = AF_INET;
++        socks4->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
++        socks4->sin_port = htons(socks_port);
++        if (debug_enabled()) {
++            log_debugf("Connecting to SOCKS5 proxy at 127.0.0.1:%d", socks_port);
++        }
+     }
+-    int connect_result = raw_connect_call(sockfd, (struct sockaddr *)&socks_addr, sizeof(socks_addr));
++
++    socklen_t socks_addr_len = (sock_domain == AF_INET6) ? sizeof(struct sockaddr_in6) : sizeof(struct sockaddr_in);
++    int connect_result = raw_connect_call(sockfd, (struct sockaddr *)&socks_ss, socks_addr_len);
+     if (connect_result != 0 && errno != EINPROGRESS) {
+         forget_virtual_peer(sockfd);
+         log_errorf("Failed to connect to SOCKS5 proxy: %s", strerror(errno));
+diff --git a/tunnel.go b/tunnel.go
+index 7e85359..5de35d5 100644
+--- a/tunnel.go
++++ b/tunnel.go
+@@ -131,10 +131,10 @@ func (m *MemoryTUN) Close() error {
+ func NewTunnel(ctx context.Context, config *WireGuardConfig) (*Tunnel, error) {
+ 	_ = ctx
+ 
+-	// Get our WireGuard IP
+-	ourIP, err := config.GetInterfaceIP()
++	// Get our WireGuard IPs (supports comma-separated addresses)
++	ourIPs, err := config.GetInterfaceIPs()
+ 	if err != nil {
+-		return nil, fmt.Errorf("failed to parse interface IP: %w", err)
++		return nil, fmt.Errorf("failed to parse interface IPs: %w", err)
+ 	}
+ 
+ 	dnsServers, err := parseDNSAddrs(config.Interface.DNS)
+@@ -142,14 +142,14 @@ func NewTunnel(ctx context.Context, config *WireGuardConfig) (*Tunnel, error) {
+ 		return nil, fmt.Errorf("failed to parse interface DNS servers: %w", err)
+ 	}
+ 
+-	tunDevice, tnet, err := netstack.CreateNetTUN([]netip.Addr{ourIP}, dnsServers, 1420)
++	tunDevice, tnet, err := netstack.CreateNetTUN(ourIPs, dnsServers, 1420)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("failed to create userspace netstack tunnel: %w", err)
+ 	}
+ 
+ 	tunnel := &Tunnel{
+ 		tun:     tunDevice,
+-		ourIP:   ourIP,
++		ourIP:   ourIPs[0],
+ 		connMap: make(map[string]*TunnelConn),
+ 		config:  config,
+ 		router:  NewRoutingEngine(config),
