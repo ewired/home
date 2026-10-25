@@ -104,6 +104,10 @@
       experimental-features=['scale-monitor-framebuffer']
     '';
   };
+  programs.kdeconnect = {
+    enable = true;
+    package = pkgs.gnomeExtensions.gsconnect;
+  };
   services.displayManager.gdm = {
     enable = true;
     wayland = true;
