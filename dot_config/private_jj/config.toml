@@ -455,6 +455,8 @@ ${EDITOR:-vim} $editor_args
 """, ""]
 
 [revset-aliases]
-'agent_job()' = 'mutable() & (empty() ~ ::(~empty())) & description(regex:"^: ")'
+# A pending instruction commit: empty, mutable, described with the `: ` prefix.
+# Intersect only; `::~empty()` parses as a range and would subtract the jobs.
+'agent_job()' = 'mutable() & empty() & description(regex:"^: ")'
 'agent_job_trail()' = 'latest(::@- & ~description(regex:"^(:: |:[a-zA-Z0-9_-]+: )"))::@'
 "closest_merge(to)" = "heads(::to & merges())" # https://isaaccorbrey.com/notes/jujutsu-megamerges-for-fun-and-profit#tldr
