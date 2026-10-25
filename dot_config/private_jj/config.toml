@@ -263,25 +263,12 @@ stack = ["rebase", "--after", "trunk()", "--before", "closest_merge(@)", "--revi
 stage = ["stack", "closest_merge(@)+:: ~ empty()"]
 restack = ["rebase", "--onto", "trunk()", "--source", "roots(trunk()..) & mutable()", "--simplify-parents"]
 # Like `restack`, but if trunk() conflicts, binary-searches trunk history for the newest ancestor that rebases cleanly (https://docs.jj-vcs.dev/latest/cli-reference/#jj-bisect).
-restack-safe = ["util", "exec", "--", "bash", "-c", """
-#!/usr/bin/env bash
-set -euo pipefail
-SRC='roots(trunk()..) & mutable()'
-RANGE='(roots(trunk()..) & mutable())-..trunk()'
-precheck=$(jj --no-integrate-operation rebase -s "$SRC" -o 'trunk()' 2>&1 || true)
-case "$precheck" in
-  *"New conflicts"*) ;;
-  *) jj rebase -s "$SRC" -o 'trunk()' --simplify-parents; exit 0 ;;
-esac
-pre=$(jj op log -n1 --no-graph -T 'id')
-bad=$(jj bisect run --range "$RANGE" -- bash -c 'o=$(jj --no-integrate-operation rebase -s "roots(trunk()..) & mutable()" -o "$JJ_BISECT_TARGET" 2>&1); case "$o" in *"New conflicts"*) exit 1;; *) exit 0;; esac' 2>&1 | sed -nE 's/^The first bad revision is: ([^ ]+).*/\\1/p')
-jj op restore "$pre" >/dev/null 2>&1
-if [ -z "$bad" ]; then
-  jj rebase -s "$SRC" -o 'trunk()' --simplify-parents
-else
-  jj rebase -s "$SRC" -o "$bad-" --simplify-parents
-fi
-"""]
+restack-safe = ["util", "exec", "--", "bash", "-c", 'exec "$HOME/.config/jj/restack.sh" safe']
+
+# Like `restack-safe`, but stops on the first trunk() revision that conflicts instead of its clean
+# ancestor, materializing the conflict so it can be resolved. Re-run to advance one conflicting
+# trunk() revision at a time until the branch reaches trunk().
+restack-first-conflict = ["util", "exec", "--", "bash", "-c", 'exec "$HOME/.config/jj/restack.sh" first-conflict']
 
 agent-jobs = ["log", "--no-graph", "--reversed", "--template", 'change_id ++ "\n"', "-r", "agent_job()"]
 
