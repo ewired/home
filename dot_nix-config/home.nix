@@ -159,16 +159,6 @@
       "TerminalEmulator"
     ];
   };
-  xdg.desktopEntries."wrap-ytdl" = {
-    name = "WrapGuard yt-dlp";
-    exec = "/home/${username}/Videos/ytdl/wrapguard.sh";
-    settings.Path = "/home/${username}/Videos/ytdl";
-    terminal = true;
-    categories = [
-      "AudioVideo"
-      "Utility"
-    ];
-  };
   dconf.settings = {
     "org/gnome/shell/keybindings" = {
       switch-to-application-1 = [ ];
