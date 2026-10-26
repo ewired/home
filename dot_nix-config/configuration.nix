@@ -37,7 +37,6 @@
   # then tmpfiles keeps them managed on each activation.
   systemd.tmpfiles.rules = [
     "d /var/lib/nix-flakes 0755 root root -"
-    "L+ /var/lib/nix-flakes/cinny - - - - /home/${username}/Documents/cinny"
     "L+ /var/lib/nix-flakes/helix - - - - /home/${username}/Documents/helix"
     "L+ /var/lib/nix-flakes/orchrd - - - - /home/${username}/Documents/orchrd"
   ];

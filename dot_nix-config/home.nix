@@ -6,7 +6,7 @@
   voxtype,
   llamaCpp,
   herdr,
-  cinny-local,
+  pinniped,
   gws,
   username,
   ...
@@ -186,7 +186,7 @@
 
   home.packages = [
     herdr.packages.x86_64-linux.default
-    cinny-local.packages.x86_64-linux.cinny
+    pinniped.packages.x86_64-linux.pinniped
     gws.packages.x86_64-linux.default
     unstable.devenv
     unstable.deno

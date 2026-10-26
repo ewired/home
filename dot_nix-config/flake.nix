@@ -18,9 +18,9 @@
     # cache.nixos.org.
     nix.url = "github:NixOS/nix/2.35.1";
     # Local flakes via username-free symlinks (see systemd.tmpfiles.rules in
-    # configuration.nix): /var/lib/nix-flakes/{helix,cinny,orchrd} -> real
-    # repos. git+file follows the symlink; the committed URL has no username.
-    cinny-local.url = "git+file:/var/lib/nix-flakes/cinny";
+    # configuration.nix): /var/lib/nix-flakes/{helix,orchrd} -> real repos.
+    # git+file follows the symlink; the committed URL has no username.
+    pinniped.url = "github:largelanguagemeowing/cinny/fork/dev";
     helix-local = {
       url = "git+file:/var/lib/nix-flakes/helix";
       # helix pins its own nixpkgs (currently 26.05.20260401) whose
@@ -105,7 +105,7 @@
                 config.allowUnfree = true;
               };
 
-              inherit (inputs) voxtype herdr cinny-local gws;
+              inherit (inputs) voxtype herdr pinniped gws;
               inherit (private) username;
               llamaCpp = inputs.llama-cpp;
             };
