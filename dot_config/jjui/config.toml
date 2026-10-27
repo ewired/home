@@ -102,6 +102,47 @@ scope = "revisions"
 desc = "run nobs on selected change"
 
 [[actions]]
+name = "nobs-unsandboxed"
+lua = '''
+local change_id = context.change_id()
+if not change_id then
+  flash({ text = "No change selected", error = true })
+  return
+end
+
+local description, err = jj("log", "--no-graph", "-r", change_id, "--template", "description")
+if description and description ~= "" and not err then
+  local function strip_id_markers(desc)
+    while true do
+      local stripped = (desc:gsub("^:: ", ""):gsub("^:[a-zA-Z0-9_-]+: ", ""))
+      if stripped == desc then return desc end
+      desc = stripped
+    end
+  end
+
+  local function is_prompt_description(desc)
+    return desc:sub(1, 2) == ": " and strip_id_markers(desc:sub(3)) == desc:sub(3)
+  end
+
+  if not is_prompt_description(description) then
+    local body = (description:gsub("^: ", ""))
+    jj("describe", "-r", change_id, "-m", ": " .. strip_id_markers(body))
+    revisions.refresh()
+    return
+  end
+end
+
+exec_shell("jj nobs -u " .. change_id)
+revisions.refresh()
+'''
+
+[[bindings]]
+action = "nobs-unsandboxed"
+key = "alt+o"
+scope = "revisions"
+desc = "run nobs (unsandboxed) on selected change"
+
+[[actions]]
 name = "nobs-run-all"
 lua = '''
 exec_shell("jj nobs-run-all")

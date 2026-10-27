@@ -197,10 +197,22 @@ nobs = ["util", "exec", "--", "bash", "-c", """
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Options (e.g. -u) are forwarded to the nobs binary; the first non-option
+# argument is the revision.
+rev=""
+fwd=()
+for arg in "$@"; do
+  if [ -z "$rev" ] && [ "${arg:0:1}" != "-" ]; then
+    rev=$arg
+  else
+    fwd+=("$arg")
+  fi
+done
+
 prepared=()
 while IFS= read -r -d '' field; do
   prepared+=("$field")
-done < <(jj nobs-prepare "${1:-@}")
+done < <(jj nobs-prepare "${rev:-@}")
 
 session_id=${prepared[0]:-}
 status=${prepared[1]:-}
@@ -214,12 +226,12 @@ fi
 
 if [ "$status" = "resumed" ]; then
   # Continue the existing session in the TUI; no message to send.
-  nobs --session "$session_id"
+  nobs --session "$session_id" "${fwd[@]}"
   exit $?
 fi
 
 # New session: launch the TUI with the prompt (or TODOs) as the first message.
-args=(--session "$session_id")
+args=("${fwd[@]}" --session "$session_id")
 if [ -n "$prompt" ]; then
   args+=(-p "$prompt")
 fi
