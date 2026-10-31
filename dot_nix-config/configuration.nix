@@ -17,6 +17,7 @@
   imports = [
     ./hardware-configuration.nix
     ./modules/snapcast-pipewire.nix
+    ./modules/io-latency.nix
     inputs.apple-tv-remote.nixosModules.default
   ];
   nix.settings.experimental-features = [
@@ -165,16 +166,7 @@
   services.zram-generator.settings."zram0".zram-resident-limit = "min(ram / 2, 16384)";
   boot.kernel.sysctl."vm.swappiness" = 150;
 
-  # Cap IO to ~80% of measured sequential throughput (~932 MB/s) on nvme0n1
-  # to prevent rogue processes from saturating disk IO
-  systemd.slices."user".sliceConfig = {
-    IOReadBandwidthMax = "/dev/nvme0n1 745M";
-    IOWriteBandwidthMax = "/dev/nvme0n1 745M";
-  };
-  systemd.slices."system".sliceConfig = {
-    IOReadBandwidthMax = "/dev/nvme0n1 745M";
-    IOWriteBandwidthMax = "/dev/nvme0n1 745M";
-  };
+  # IO fairness for interactive use handled by BFQ in ./modules/io-latency.nix
 
   systemd.coredump.extraConfig = ''
     Storage=external
