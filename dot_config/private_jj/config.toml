@@ -1,7 +1,11 @@
 "$schema" = "https://jj-vcs.github.io/jj/latest/config-schema.json"
 
 [ui]
-diff-formatter = ["difft", "--color=always", "$left", "$right"]
+# --width=$width: inside jjui (and any non-TTY pipe) difft can't detect the
+# terminal width, so side-by-side output would render at a wrong width.
+# difft 0.71.0 also has a width-detection regression when called by jj:
+# https://github.com/Wilfred/difftastic/issues/1064
+diff-formatter = ["difft", "--color=always", "--width=$width", "$left", "$right"]
 
 [user]
 name = "ewired"
