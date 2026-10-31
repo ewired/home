@@ -334,12 +334,6 @@
     inputs.zen-browser.packages.${pkgs.stdenv.hostPlatform.system}.default
     inputs.nix-index-database.packages.${pkgs.stdenv.hostPlatform.system}.comma-with-db
     wl-clipboard
-    gnomeExtensions.caffeine
-    gnomeExtensions.bing-wallpaper-changer
-    gnomeExtensions.hot-edge
-    gnomeExtensions.appindicator
-    gnomeExtensions.burn-my-windows
-    gnomeExtensions.tiling-shell
     resources
     meld
     ripgrep
@@ -380,7 +374,26 @@
     (writeShellScriptBin "sudo-askpass" ''
       exec ${zenity}/bin/zenity --password --title="sudo authentication"
     '')
-  ];
+    # pinned to this channel: unstable's weather-or-not v24 requires
+    # shell 50+, this channel's v20 supports our current shell 49;
+    # swap to unstable when we upgrade to a shell-50 channel (26.05+)
+    gnomeExtensions.weather-or-not
+  ] ++ (lib.attrVals [
+    # all extensions from nixpkgs-unstable so their shell-version metadata
+    # keeps up with newer GNOME than this channel's shell (49)
+    "caffeine"
+    "bing-wallpaper-changer"
+    "hot-edge"
+    "appindicator"
+    "burn-my-windows"
+    "tiling-shell"
+    "cronomix"
+    "vitals"
+    "window-calls"
+    "soft-brightness-plus"
+    "medialine"
+    "yet-another-radio"
+  ] unstable.gnomeExtensions);
   environment.variables = {
     GST_PLUGIN_PATH = "/run/current-system/sw/lib/gstreamer-1.0/";
   };
